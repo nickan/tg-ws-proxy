@@ -22,7 +22,7 @@ TG_PROXY_SECRET="ee155b2ebbd93854830e71195db68a6cdd"
 
 # GitHub Releases download URL — update tag on new release
 # Format: https://github.com/<owner>/<repo>/releases/download/<tag>/<binary>
-GITHUB_REPO="your-github-username/tg-ws-proxy"
+GITHUB_REPO="nickan/tg-ws-proxy"
 RELEASE_TAG="v0.1.0"
 BINARY_NAME="tg-ws-proxy-aarch64-musl"
 DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
