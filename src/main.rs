@@ -637,8 +637,12 @@ fn parse_args() -> Config {
         .unwrap_or_else(|| "ee155b2ebbd93854830e71195db68a6cdd".to_string());
 
     let secret_trimmed = secret_hex.trim().trim_start_matches("0x");
-    let decoded = hex::decode(secret_trimmed)
+    let mut decoded = hex::decode(secret_trimmed)
         .unwrap_or_else(|e| panic!("Secret must be valid hex chars: '{}' (error: {})", secret_trimmed, e));
+
+    if decoded.len() == 17 && (decoded[0] == 0xdd || decoded[0] == 0xee) {
+        decoded.remove(0);
+    }
 
     if decoded.len() != SECRET_LEN {
         panic!("Secret must be exactly 16 bytes (32 hex characters). Got {} bytes from '{}'", decoded.len(), secret_trimmed);
