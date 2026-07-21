@@ -178,17 +178,17 @@ fn wrap_tls_record(data: &[u8]) -> Vec<u8> {
 
 // ─── FakeTLS StreamReader/StreamWriter wrapper ───────────────────────────────
 
-struct FakeTlsStream<S> {
-    inner: S,
+struct FakeTlsReader<R> {
+    inner: R,
     read_buf: Vec<u8>,
     read_left: usize,
 }
 
-impl<S> FakeTlsStream<S>
+impl<R> FakeTlsReader<R>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    R: AsyncRead + Unpin,
 {
-    fn new(inner: S) -> Self {
+    fn new(inner: R) -> Self {
         Self {
             inner,
             read_buf: Vec::new(),
@@ -241,6 +241,19 @@ where
             self.inner.read_exact(&mut data).await?;
             return Ok(data);
         }
+    }
+}
+
+struct FakeTlsWriter<W> {
+    inner: W,
+}
+
+impl<W> FakeTlsWriter<W>
+where
+    W: AsyncWrite + Unpin,
+{
+    fn new(inner: W) -> Self {
+        Self { inner }
     }
 
     async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
@@ -503,8 +516,8 @@ async fn handle_client(
     client.write_all(&server_hello).await?;
 
     // 3. Read client's obfs2 handshake inside TLS Wrapper
-    let mut tls_stream = FakeTlsStream::new(client);
-    let handshake_bytes = tls_stream.read_exactly(64).await?;
+    let mut tls_reader = FakeTlsReader::new(client);
+    let handshake_bytes = tls_reader.read_exactly(64).await?;
     let handshake: [u8; 64] = handshake_bytes.try_into().unwrap();
 
     let (dc_id, is_media, proto_tag, client_dec_prekey_iv) = try_handshake(&handshake, cfg.secret.as_ref())
@@ -543,18 +556,18 @@ async fn handle_client(
     let mut splitter = MsgSplitter::new(&client_dec_prekey_iv, cfg.secret.as_ref(), proto_tag);
 
     // 7. Split FakeTlsStream into Reader & Writer
-    let (mut tls_reader, tls_writer) = tokio::io::split(tls_stream.inner);
-    let mut tls_writer = FakeTlsStream::new(tls_writer);
+    let (cr, cw) = tokio::io::split(tls_reader.inner);
+    let mut tls_reader = FakeTlsReader::new(cr);
+    let mut tls_writer = FakeTlsWriter::new(cw);
 
     let (mut ws_sink, mut ws_stream) = ws.split();
 
     // 8. Relay tasks
     let client_to_ws = async move {
-        let mut buf = vec![0u8; 65536];
         loop {
-            let n = tls_reader.read(&mut buf).await?;
-            if n == 0 { break; }
-            let mut plain = buf[..n].to_vec();
+            let payload = tls_reader.read_tls_payload().await?;
+            if payload.is_empty() { break; }
+            let mut plain = payload;
             clt_dec.apply_keystream(&mut plain); // decrypt
 
             let mut cipher = plain;
@@ -601,7 +614,7 @@ async fn handle_client(
 // ─── Command Line Parser ──────────────────────────────────────────────────────
 
 fn parse_args() -> Config {
-    let mut args = pico-args::Arguments::from_env();
+    let mut args = pico_args::Arguments::from_env();
 
     if args.contains(["-h", "--help"]) {
         println!("{}", concat!(
