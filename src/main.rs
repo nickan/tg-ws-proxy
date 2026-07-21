@@ -260,14 +260,14 @@ fn parse_args() -> Config {
 
     // --help
     if args.contains(["-h", "--help"]) {
-        eprintln!(
-            "Usage: tg-ws-proxy [--port <PORT>] [--secret <HEX>]\n\
-             \n\
-             Options:\n\
-             \  --port    Listening port (default: 8443)\n\
-             \  --secret  16-byte MTProxy secret as 32 hex chars\n\
-             \            (default: ee155b2ebbd93854830e71195db68a6cdd truncated to 16 B)\n"
-        );
+        eprintln!("{}", concat!(
+            "Usage: tg-ws-proxy [--port <PORT>] [--secret <HEX>]\n",
+            "\n",
+            "Options:\n",
+            "  --port    Listening port (default: 8443)\n",
+            "  --secret  16-byte MTProxy secret as 32 hex chars\n",
+            "            (default: ee155b2ebbd93854830e71195db68a6cdd)\n"
+        ));
         std::process::exit(0);
     }
 

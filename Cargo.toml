@@ -35,7 +35,7 @@ tokio = { version = "1", default-features = false, features = [
 pico-args = "0.5"
 
 # Hex decoding for --secret validation (tiny, no_std compatible)
-hex = { version = "0.4", default-features = false }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 
 # --------------------------------------------------------------------------
 # Build metadata
