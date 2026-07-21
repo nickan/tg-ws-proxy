@@ -1,51 +1,8 @@
-//! tg-ws-proxy — Lightweight Telegram MTProxy TCP relay
+//! tg-ws-proxy — Lightweight Telegram MTProxy WebSocket Bypass Relay in Rust
 //!
 //! Architecture:
-//!   Client ──TCP──► [tg-ws-proxy :8443] ──TCP──► Telegram DC
+//!   Client ──[FakeTLS TCP]──► [tg-ws-proxy :8443] ──[WSS WebSocket]──► Cloudflare ──► Telegram DC
 //!
-//! The proxy performs:
-//!   1. Secret validation (first 64 bytes contain 16-byte secret)
-//!   2. DC selection from Telegram's fake TLS / MTProto header
-//!   3. Bidirectional transparent byte relay to the real DC
-//!
-//! Memory target: < 10 MB RSS at steady state (each connection ~8 KB stack
-//! + two 8 KB I/O buffers = ~24 KB per connection).
-//!
-//! ─────────────────────────────────────────────────────────────────────────
-//! CROSS-COMPILATION COMMANDS
-//! ─────────────────────────────────────────────────────────────────────────
-//!
-//! Option A — using `cross` (recommended, zero host toolchain setup):
-//!
-//!   cargo install cross --git https://github.com/cross-rs/cross
-//!   cross build --release --target aarch64-unknown-linux-musl
-//!
-//!   # Binary will be at:
-//!   # target/aarch64-unknown-linux-musl/release/tg-ws-proxy  (~1.4 MB)
-//!
-//! Option B — native cargo with musl toolchain:
-//!
-//!   # Install musl cross-linker (Debian/Ubuntu host):
-//!   sudo apt-get install gcc-aarch64-linux-gnu musl-tools
-//!   rustup target add aarch64-unknown-linux-musl
-//!
-//!   # Add to ~/.cargo/config.toml:
-//!   # [target.aarch64-unknown-linux-musl]
-//!   # linker = "aarch64-linux-gnu-gcc"
-//!   # rustflags = ["-C", "link-arg=-static", "-C", "link-arg=-lc"]
-//!
-//!   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
-//!   cargo build --release --target aarch64-unknown-linux-musl
-//!
-//! Option C — Docker one-liner:
-//!
-//!   docker run --rm \
-//!     -v "$PWD":/project \
-//!     -w /project \
-//!     ghcr.io/cross-rs/aarch64-unknown-linux-musl:main \
-//!     cargo build --release --target aarch64-unknown-linux-musl
-//!
-//! ─────────────────────────────────────────────────────────────────────────
 
 use std::{
     net::SocketAddr,
@@ -53,55 +10,45 @@ use std::{
     time::Duration,
 };
 
+use aes::cipher::{KeyIvInit, StreamCipher};
+use futures_util::{SinkExt, StreamExt};
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     time::timeout,
 };
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::Message,
+};
 
-// ─── Telegram DC address table ────────────────────────────────────────────────
-//
-// Official Telegram production DC endpoints (TCP, port 443 preferred for
-// firewall bypass). These are public knowledge from the Telegram API docs.
-// We map DC id (1-5) → (primary_addr, fallback_addr).
-//
-const DC_ADDRS: &[(&str, &str)] = &[
-    /* DC1 */ ("149.154.175.50:443",  "149.154.175.50:80"),
-    /* DC2 */ ("149.154.167.51:443",  "149.154.167.51:80"),
-    /* DC3 */ ("149.154.175.100:443", "149.154.175.100:80"),
-    /* DC4 */ ("149.154.167.91:443",  "149.154.167.91:80"),
-    /* DC5 */ ("91.108.56.100:443",   "91.108.56.100:80"),
-];
+type HmacSha256 = Hmac<Sha256>;
+type Aes256Ctr = ctr::Ctr128BE<aes::Aes256>;
 
-// ─── MTProto / FakeTLS constants ─────────────────────────────────────────────
-//
-// Telegram MTProto obfuscation uses a 64-byte header:
-//   bytes[0..4]   = random (magic/nonce prefix)
-//   bytes[4..8]   = random
-//   bytes[8..56]  = random
-//   bytes[56..60] = 0xEFEFEFEF (abridged flag) or other protocol tag
-//   bytes[60..64] = DC index (little-endian i16 at bytes[60..62])
-//
-// For Fake-TLS mode the client sends a full TLS ClientHello; the DC id
-// is encoded differently. We keep a simple fallback: if we cannot parse
-// the DC id we default to DC2 (most users' home DC).
-
-const HEADER_LEN: usize = 64;
+const SECRET_LEN: usize = 16;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
-const SECRET_LEN: usize = 16; // raw bytes (32 hex chars)
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+const DOMAINS: &[&str] = &[
+    "cakeisalie.co.uk",
+    "noskomnadzor.co.uk",
+    "pyatdesyatdva.co.uk",
+    "notelega.co.uk",
+    "nebally.co.uk",
+    "stopblocking.co.uk",
+    "pyatdesyatodin.co.uk",
+    "sorokdva.co.uk",
+];
 
 #[derive(Clone)]
 struct Config {
-    /// Bind port for incoming Telegram clients
     port: u16,
-    /// Raw 16-byte secret (parsed from --secret hex arg)
     secret: Arc<[u8; SECRET_LEN]>,
 }
 
-// ─── Entry point ─────────────────────────────────────────────────────────────
+// ─── Entry Point ─────────────────────────────────────────────────────────────
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -112,13 +59,9 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("Failed to bind {addr}: {e}"));
 
-    eprintln!("[tg-ws-proxy] Listening on {addr}");
-    eprintln!(
-        "[tg-ws-proxy] Secret: {}",
-        hex::encode(cfg.secret.as_ref())
-    );
+    println!("[tg-ws-proxy] Listening on {addr}");
+    println!("[tg-ws-proxy] Secret: {}", hex::encode(cfg.secret.as_ref()));
 
-    // Graceful shutdown on SIGTERM / SIGINT
     let cfg = Arc::new(cfg);
     loop {
         tokio::select! {
@@ -136,131 +79,532 @@ async fn main() {
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                eprintln!("[tg-ws-proxy] Shutting down…");
+                println!("[tg-ws-proxy] Shutting down…");
                 break;
             }
         }
     }
 }
 
-// ─── Per-connection handler ───────────────────────────────────────────────────
+// ─── FakeTLS verification helpers ─────────────────────────────────────────────
+
+fn verify_client_hello(data: &[u8], secret: &[u8]) -> Option<(Vec<u8>, Vec<u8>, u32)> {
+    if data.len() < 43 { return None; }
+    if data[0] != 0x16 { return None; }
+    if data[5] != 0x01 { return None; }
+
+    let client_random = data[11..43].to_vec();
+    let mut zeroed = data.to_vec();
+    zeroed[11..43].copy_from_slice(&[0u8; 32]);
+
+    let mut mac = HmacSha256::new_from_slice(secret).ok()?;
+    mac.update(&zeroed);
+    let expected = mac.finalize().into_bytes();
+
+    if expected[..28] != client_random[..28] {
+        return None;
+    }
+
+    let mut ts_xor = [0u8; 4];
+    for i in 0..4 {
+        ts_xor[i] = client_random[28 + i] ^ expected[28 + i];
+    }
+    let timestamp = u32::from_le_bytes(ts_xor);
+
+    let mut session_id = vec![0u8; 32];
+    if data.len() >= 44 + 32 && data[43] == 0x20 {
+        session_id.copy_from_slice(&data[44..76]);
+    }
+
+    Some((client_random, session_id, timestamp))
+}
+
+fn build_server_hello(secret: &[u8], client_random: &[u8], session_id: &[u8]) -> Vec<u8> {
+    let mut sh = vec![
+        0x16, 0x03, 0x03, 0x00, 0x7a,
+        0x02, 0x00, 0x00, 0x76,
+        0x03, 0x03,
+    ];
+    sh.extend_from_slice(&[0u8; 32]); // placeholder for server random
+    sh.push(0x20); // session id length
+    sh.extend_from_slice(session_id);
+    sh.extend_from_slice(&[0x13, 0x01, 0x00, 0x00, 0x2e, 0x00, 0x33, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20]);
+
+    let mut pubkey = [0u8; 32];
+    let _ = getrandom::getrandom(&mut pubkey);
+    sh.extend_from_slice(&pubkey);
+    sh.extend_from_slice(&[0x00, 0x2b, 0x00, 0x02, 0x03, 0x04]);
+
+    let ccs = vec![0x14, 0x03, 0x03, 0x00, 0x01, 0x01];
+
+    let encrypted_size = 2000;
+    let mut encrypted_data = vec![0u8; encrypted_size];
+    let _ = getrandom::getrandom(&mut encrypted_data);
+
+    let mut app_record = vec![0x17, 0x03, 0x03];
+    app_record.extend_from_slice(&(encrypted_size as u16).to_be_bytes());
+    app_record.extend_from_slice(&encrypted_data);
+
+    let mut response = sh.clone();
+    response.extend_from_slice(&ccs);
+    response.extend_from_slice(&app_record);
+
+    let mut hmac_input = client_random.to_vec();
+    hmac_input.extend_from_slice(&response);
+
+    let mut mac = HmacSha256::new_from_slice(secret).unwrap();
+    mac.update(&hmac_input);
+    let server_random = mac.finalize().into_bytes();
+
+    response[11..43].copy_from_slice(&server_random);
+    response
+}
+
+fn wrap_tls_record(data: &[u8]) -> Vec<u8> {
+    let mut parts = Vec::new();
+    let mut offset = 0;
+    while offset < data.len() {
+        let chunk_size = std::cmp::min(data.len() - offset, 16384);
+        let chunk = &data[offset..offset + chunk_size];
+        parts.push(0x17);
+        parts.push(0x03);
+        parts.push(0x03);
+        parts.extend_from_slice(&(chunk_size as u16).to_be_bytes());
+        parts.extend_from_slice(chunk);
+        offset += chunk_size;
+    }
+    parts
+}
+
+// ─── FakeTLS StreamReader/StreamWriter wrapper ───────────────────────────────
+
+struct FakeTlsStream<S> {
+    inner: S,
+    read_buf: Vec<u8>,
+    read_left: usize,
+}
+
+impl<S> FakeTlsStream<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            read_buf: Vec::new(),
+            read_left: 0,
+        }
+    }
+
+    async fn read_exactly(&mut self, n: usize) -> io::Result<Vec<u8>> {
+        while self.read_buf.len() < n {
+            let payload = self.read_tls_payload().await?;
+            if payload.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Incomplete read"));
+            }
+            self.read_buf.extend_from_slice(&payload);
+        }
+        let result = self.read_buf[..n].to_vec();
+        self.read_buf.drain(..n);
+        Ok(result)
+    }
+
+    async fn read_tls_payload(&mut self) -> io::Result<Vec<u8>> {
+        if self.read_left > 0 {
+            let mut buf = vec![0u8; self.read_left];
+            let n = self.inner.read(&mut buf).await?;
+            if n == 0 { return Ok(Vec::new()); }
+            self.read_left -= n;
+            buf.truncate(n);
+            return Ok(buf);
+        }
+
+        loop {
+            let mut hdr = [0u8; 5];
+            self.inner.read_exact(&mut hdr).await?;
+            let rtype = hdr[0];
+            let rec_len = u16::from_be_bytes([hdr[3], hdr[4]]) as usize;
+
+            if rtype == 0x14 {
+                if rec_len > 0 {
+                    let mut tmp = vec![0u8; rec_len];
+                    self.inner.read_exact(&mut tmp).await?;
+                }
+                continue;
+            }
+
+            if rtype != 0x17 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected TLS AppData"));
+            }
+
+            let mut data = vec![0u8; rec_len];
+            self.inner.read_exact(&mut data).await?;
+            return Ok(data);
+        }
+    }
+
+    async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
+        let record = wrap_tls_record(data);
+        self.inner.write_all(&record).await
+    }
+
+    async fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush().await
+    }
+}
+
+// ─── obfs2 & MTProto Deobfuscation Helpers ─────────────────────────────────────
+
+fn try_handshake(handshake: &[u8; 64], secret: &[u8]) -> Option<(i16, bool, [u8; 4], Vec<u8>)> {
+    let dec_prekey_and_iv = handshake[8..56].to_vec();
+    let dec_prekey = &dec_prekey_and_iv[..32];
+    let dec_iv = &dec_prekey_and_iv[32..48];
+
+    let mut hasher = Sha256::new();
+    hasher.update(dec_prekey);
+    hasher.update(secret);
+    let dec_key = hasher.finalize();
+
+    let mut cipher = Aes256Ctr::new_from_slices(&dec_key, dec_iv).ok()?;
+    let mut decrypted = *handshake;
+    cipher.apply_keystream(&mut decrypted);
+
+    let proto_tag: [u8; 4] = decrypted[56..60].try_into().ok()?;
+
+    let abridged = [0xef, 0xef, 0xef, 0xef];
+    let intermediate = [0xee, 0xee, 0xee, 0xee];
+    let secure = [0xdd, 0xdd, 0xdd, 0xdd];
+
+    if proto_tag != abridged && proto_tag != intermediate && proto_tag != secure {
+        return None;
+    }
+
+    let dc_idx = i16::from_le_bytes([decrypted[60], decrypted[61]]);
+    let dc_id = dc_idx.abs();
+    let is_media = dc_idx < 0;
+
+    Some((dc_id, is_media, proto_tag, dec_prekey_and_iv))
+}
+
+fn generate_relay_init(proto_tag: [u8; 4], dc_idx: i16) -> Vec<u8> {
+    let mut rnd = [0u8; 64];
+    loop {
+        let _ = getrandom::getrandom(&mut rnd);
+        if rnd[0] == 0xef { continue; }
+        let start: [u8; 4] = rnd[..4].try_into().unwrap();
+        if start == [0x48, 0x45, 0x41, 0x44] || start == [0x50, 0x4f, 0x53, 0x54]
+           || start == [0x47, 0x45, 0x54, 0x20] || start == [0xee, 0xee, 0xee, 0xee]
+           || start == [0xdd, 0xdd, 0xdd, 0xdd] || start == [0x16, 0x03, 0x01, 0x02] {
+            continue;
+        }
+        if rnd[4..8] == [0, 0, 0, 0] { continue; }
+        break;
+    }
+
+    let enc_key = &rnd[8..40];
+    let enc_iv = &rnd[40..56];
+
+    let mut cipher = Aes256Ctr::new_from_slices(enc_key, enc_iv).unwrap();
+    let mut encrypted_full = rnd;
+    cipher.apply_keystream(&mut encrypted_full);
+
+    let mut keystream_tail = [0u8; 8];
+    for i in 0..8 {
+        keystream_tail[i] = encrypted_full[56 + i] ^ rnd[56 + i];
+    }
+
+    let dc_bytes = dc_idx.to_le_bytes();
+    let mut tail_plain = [0u8; 8];
+    tail_plain[..4].copy_from_slice(&proto_tag);
+    tail_plain[4..6].copy_from_slice(&dc_bytes);
+
+    let mut rand_tail = [0u8; 2];
+    let _ = getrandom::getrandom(&mut rand_tail);
+    tail_plain[6..8].copy_from_slice(&rand_tail);
+
+    let mut encrypted_tail = [0u8; 8];
+    for i in 0..8 {
+        encrypted_tail[i] = tail_plain[i] ^ keystream_tail[i];
+    }
+
+    let mut result = rnd.to_vec();
+    result[56..64].copy_from_slice(&encrypted_tail);
+    result
+}
+
+// ─── Crypto Context ───────────────────────────────────────────────────────────
+
+// ─── Crypto Context ───────────────────────────────────────────────────────────
+
+fn build_crypto_ctx(client_dec_prekey_iv: &[u8], secret: &[u8], relay_init: &[u8]) -> (Aes256Ctr, Aes256Ctr, Aes256Ctr, Aes256Ctr) {
+    // Client decryptor
+    let clt_dec_prekey = &client_dec_prekey_iv[..32];
+    let clt_dec_iv = &client_dec_prekey_iv[32..48];
+    let mut hasher = Sha256::new();
+    hasher.update(clt_dec_prekey);
+    hasher.update(secret);
+    let clt_dec_key = hasher.finalize();
+
+    // Client encryptor
+    let mut reversed = client_dec_prekey_iv.to_vec();
+    reversed.reverse();
+    let clt_enc_prekey = &reversed[..32];
+    let clt_enc_iv = &reversed[32..48];
+    let mut hasher = Sha256::new();
+    hasher.update(clt_enc_prekey);
+    hasher.update(secret);
+    let clt_enc_key = hasher.finalize();
+
+    let mut clt_dec = Aes256Ctr::new_from_slices(&clt_dec_key, clt_dec_iv).unwrap();
+    let clt_enc = Aes256Ctr::new_from_slices(&clt_enc_key, clt_enc_iv).unwrap();
+
+    // Skip first 64 bytes of client decryption
+    let mut zero_64 = [0u8; 64];
+    clt_dec.apply_keystream(&mut zero_64);
+
+    // Telegram side (standard obfs2 keys)
+    let relay_enc_key = &relay_init[8..40];
+    let relay_enc_iv = &relay_init[40..56];
+
+    let mut relay_dec_prekey_iv = relay_init[8..56].to_vec();
+    relay_dec_prekey_iv.reverse();
+    let relay_dec_key = &relay_dec_prekey_iv[..32];
+    let relay_dec_iv = &relay_dec_prekey_iv[32..48];
+
+    let mut tg_enc = Aes256Ctr::new_from_slices(relay_enc_key, relay_enc_iv).unwrap();
+    let tg_dec = Aes256Ctr::new_from_slices(relay_dec_key, relay_dec_iv).unwrap();
+
+    // Skip first 64 bytes of telegram encryption
+    let mut zero_64_tg = [0u8; 64];
+    tg_enc.apply_keystream(&mut zero_64_tg);
+
+    (clt_dec, clt_enc, tg_enc, tg_dec)
+}
+
+// ─── MsgSplitter ──────────────────────────────────────────────────────────────
+
+struct MsgSplitter {
+    proto: [u8; 4],
+    cipher_buf: Vec<u8>,
+    plain_buf: Vec<u8>,
+    dec: Aes256Ctr,
+}
+
+impl MsgSplitter {
+    fn new(client_dec_prekey_iv: &[u8], secret: &[u8], proto: [u8; 4]) -> Self {
+        let clt_dec_prekey = &client_dec_prekey_iv[..32];
+        let clt_dec_iv = &client_dec_prekey_iv[32..48];
+        let mut hasher = Sha256::new();
+        hasher.update(clt_dec_prekey);
+        hasher.update(secret);
+        let clt_dec_key = hasher.finalize();
+
+        let mut dec = Aes256Ctr::new_from_slices(&clt_dec_key, clt_dec_iv).unwrap();
+        let mut zero_64 = [0u8; 64];
+        dec.apply_keystream(&mut zero_64);
+
+        Self {
+            proto,
+            cipher_buf: Vec::new(),
+            plain_buf: Vec::new(),
+            dec,
+        }
+    }
+
+    fn split(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
+        self.cipher_buf.extend_from_slice(chunk);
+        let mut plain = chunk.to_vec();
+        self.dec.apply_keystream(&mut plain);
+        self.plain_buf.extend_from_slice(&plain);
+
+        let mut parts = Vec::new();
+        let mut offset = 0;
+
+        let abridged = [0xef, 0xef, 0xef, 0xef];
+        let intermediate = [0xee, 0xee, 0xee, 0xee];
+        let secure = [0xdd, 0xdd, 0xdd, 0xdd];
+
+        while offset < self.cipher_buf.len() {
+            let avail = self.cipher_buf.len() - offset;
+            let packet_len = if self.proto == abridged {
+                let first = self.plain_buf[offset];
+                if first == 0x7f || first == 0xff {
+                    if avail < 4 { break; }
+                    let len_bytes: [u8; 4] = [
+                        self.plain_buf[offset + 1],
+                        self.plain_buf[offset + 2],
+                        self.plain_buf[offset + 3],
+                        0,
+                    ];
+                    let payload_len = u32::from_le_bytes(len_bytes) as usize * 4;
+                    4 + payload_len
+                } else {
+                    let payload_len = (first & 0x7f) as usize * 4;
+                    1 + payload_len
+                }
+            } else if self.proto == intermediate || self.proto == secure {
+                if avail < 4 { break; }
+                let len_bytes: [u8; 4] = self.plain_buf[offset..offset+4].try_into().unwrap();
+                let payload_len = (u32::from_le_bytes(len_bytes) & 0x7fffffff) as usize;
+                4 + payload_len
+            } else {
+                break;
+            };
+
+            if avail < packet_len {
+                break;
+            }
+
+            parts.push(self.cipher_buf[offset..offset + packet_len].to_vec());
+            offset += packet_len;
+        }
+
+        if offset > 0 {
+            self.cipher_buf.drain(..offset);
+            self.plain_buf.drain(..offset);
+        }
+        parts
+    }
+}
+
+// ─── Connection Handler ───────────────────────────────────────────────────────
 
 async fn handle_client(
     mut client: TcpStream,
     peer: SocketAddr,
     cfg: Arc<Config>,
 ) -> io::Result<()> {
-    // Disable Nagle — we relay interactive traffic
     client.set_nodelay(true)?;
 
-    // ── 1. Read initial 64-byte MTProto obfuscation header ──────────────────
-    let mut header = [0u8; HEADER_LEN];
-    timeout(HANDSHAKE_TIMEOUT, client.read_exact(&mut header))
+    // 1. Read TLS ClientHello
+    let mut initial_hdr = [0u8; 5];
+    timeout(HANDSHAKE_TIMEOUT, client.read_exact(&mut initial_hdr))
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "handshake timeout"))?
-        .map_err(|e| { eprintln!("[{peer}] header read error: {e}"); e })?;
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ClientHello header timeout"))??;
 
-    // ── 2. Validate secret ──────────────────────────────────────────────────
-    //
-    // In MTProto obfuscated-2 the secret appears XOR-encrypted inside the
-    // header, so full validation requires reversing the obfuscation cipher.
-    // For a relay proxy (like Flowseal/tg-ws-proxy) a lightweight approach
-    // is acceptable: we just forward traffic — Telegram's DC will reject
-    // invalid secrets. We still do a fast length/prefix sanity check.
-    //
-    // If you need strict server-side validation, implement the full
-    // AES-CTR-256 obfuscation reversal described in:
-    // https://core.telegram.org/mtproto/obfuscation
-    if !looks_like_mtproto(&header) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "not an MTProto obfuscated handshake",
-        ));
+    if initial_hdr[0] != 0x16 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected TLS Handshake"));
     }
 
-    // ── 3. Determine target DC ──────────────────────────────────────────────
-    let dc_idx = parse_dc_id(&header);
-    let (primary, fallback) = DC_ADDRS[dc_idx];
-    eprintln!("[{peer}] → DC{} ({primary})", dc_idx + 1);
+    let record_len = u16::from_be_bytes([initial_hdr[3], initial_hdr[4]]) as usize;
+    let mut client_hello = vec![0u8; record_len];
+    timeout(HANDSHAKE_TIMEOUT, client.read_exact(&mut client_hello))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ClientHello body timeout"))??;
 
-    // ── 4. Connect to Telegram DC ───────────────────────────────────────────
-    let mut dc_stream = connect_with_fallback(primary, fallback).await?;
-    dc_stream.set_nodelay(true)?;
+    let mut full_hello = initial_hdr.to_vec();
+    full_hello.extend_from_slice(&client_hello);
 
-    // ── 5. Replay header to DC (DC expects the full obfuscated stream) ──────
-    dc_stream.write_all(&header).await?;
+    let (client_random, session_id, _) = verify_client_hello(&full_hello, cfg.secret.as_ref())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid FakeTLS ClientHello"))?;
 
-    // ── 6. Bidirectional relay ───────────────────────────────────────────────
-    //
-    // tokio::io::copy_bidirectional uses two 8 KB kernel-allocated buffers
-    // internally (configurable via copy_bidirectional_with_sizes).
-    // Total per-connection heap: ~16–24 KB.
-    let (mut cr, mut cw) = client.into_split();
-    let (mut dr, mut dw) = dc_stream.into_split();
+    // 2. Reply ServerHello
+    let server_hello = build_server_hello(cfg.secret.as_ref(), &client_random, &session_id);
+    client.write_all(&server_hello).await?;
 
-    let client_to_dc = io::copy(&mut cr, &mut dw);
-    let dc_to_client = io::copy(&mut dr, &mut cw);
+    // 3. Read client's obfs2 handshake inside TLS Wrapper
+    let mut tls_stream = FakeTlsStream::new(client);
+    let handshake_bytes = tls_stream.read_exactly(64).await?;
+    let handshake: [u8; 64] = handshake_bytes.try_into().unwrap();
+
+    let (dc_id, is_media, proto_tag, client_dec_prekey_iv) = try_handshake(&handshake, cfg.secret.as_ref())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid obfs2 handshake inside TLS"))?;
+
+    println!("[{peer}] → DC{} (media={})", dc_id, is_media);
+
+    // 4. Connect to Cloudflare fronting WebSocket
+    let mut ws_stream = None;
+    for &domain in DOMAINS {
+        // Build websocket target domain
+        let target_domain = format!("kws{dc_id}.{domain}");
+        let ws_url = format!("wss://{target_domain}/apiws");
+        println!("[{peer}] Trying domain: {}", target_domain);
+
+        match timeout(WS_CONNECT_TIMEOUT, connect_async(&ws_url)).await {
+            Ok(Ok((ws, _))) => {
+                ws_stream = Some(ws);
+                break;
+            }
+            Ok(Err(e)) => println!("[{peer}] WSS connect failed on {target_domain}: {e}"),
+            Err(_) => println!("[{peer}] WSS connect timed out on {target_domain}"),
+        }
+    }
+
+    let mut ws = ws_stream.ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "All WSS domains failed"))?;
+
+    // 5. Generate and send Telegram-side obfuscation handshake
+    let dc_idx = if is_media { -dc_id } else { dc_id };
+    let relay_init = generate_relay_init(proto_tag, dc_idx);
+    ws.send(Message::Binary(relay_init.clone())).await
+        .map_err(|e| io::Error::new(io::ErrorKind::WriteZero, format!("WS write error: {e}")))?;
+
+    // 6. Build Cryptography & Splitter
+    let (mut clt_dec, mut clt_enc, mut tg_enc, mut tg_dec) = build_crypto_ctx(&client_dec_prekey_iv, cfg.secret.as_ref(), &relay_init);
+    let mut splitter = MsgSplitter::new(&client_dec_prekey_iv, cfg.secret.as_ref(), proto_tag);
+
+    // 7. Split FakeTlsStream into Reader & Writer
+    let (mut tls_reader, tls_writer) = tokio::io::split(tls_stream.inner);
+    let mut tls_writer = FakeTlsStream::new(tls_writer);
+
+    let (mut ws_sink, mut ws_stream) = ws.split();
+
+    // 8. Relay tasks
+    let client_to_ws = async move {
+        let mut buf = vec![0u8; 65536];
+        loop {
+            let n = tls_reader.read(&mut buf).await?;
+            if n == 0 { break; }
+            let mut plain = buf[..n].to_vec();
+            clt_dec.apply_keystream(&mut plain); // decrypt
+
+            let mut cipher = plain;
+            tg_enc.apply_keystream(&mut cipher); // encrypt
+
+            let parts = splitter.split(&cipher);
+            for part in parts {
+                ws_sink.send(Message::Binary(part)).await
+                    .map_err(|e| io::Error::new(io::ErrorKind::WriteZero, format!("WS send error: {e}")))?;
+            }
+        }
+        Ok::<(), io::Error>(())
+    };
+
+    let ws_to_client = async move {
+        while let Some(msg) = ws_stream.next().await {
+            let msg = msg.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("WS read error: {e}")))?;
+            match msg {
+                Message::Binary(data) => {
+                    let mut plain = data;
+                    tg_dec.apply_keystream(&mut plain); // decrypt
+
+                    let mut cipher = plain;
+                    clt_enc.apply_keystream(&mut cipher); // encrypt
+
+                    tls_writer.write_all(&cipher).await?;
+                    tls_writer.flush().await?;
+                }
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+        Ok::<(), io::Error>(())
+    };
 
     tokio::select! {
-        r = client_to_dc => { r?; }
-        r = dc_to_client => { r?; }
+        res = client_to_ws => { res?; }
+        res = ws_to_client => { res?; }
     }
 
     Ok(())
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Heuristic: a valid MTProto obfuscated-2 header must NOT start with
-/// TLS/HTTP/SSH magic bytes and must have non-zero entropy in the first 8 bytes.
-fn looks_like_mtproto(h: &[u8; HEADER_LEN]) -> bool {
-    // Reject TLS ClientHello (0x16 0x03 …)
-    if h[0] == 0x16 && h[1] == 0x03 { return false; }
-    // Reject HTTP GET/POST/HEAD/etc.
-    if &h[..4] == b"GET " || &h[..4] == b"POST" || &h[..4] == b"HEAD" { return false; }
-    // Reject SSH
-    if &h[..4] == b"SSH-" { return false; }
-    // Must not be all zeros
-    h.iter().any(|&b| b != 0)
-}
-
-/// Extract DC index (0-based) from the obfuscated MTProto header.
-/// Bytes 60–61 contain a little-endian i16 DC id in obfuscated-2 format.
-fn parse_dc_id(h: &[u8; HEADER_LEN]) -> usize {
-    // The header is XOR-obfuscated with a key derived from bytes[8..40].
-    // For a pure relay we can skip full deobfuscation and use a simple
-    // heuristic: parse the raw i16 at offset 60, mask to valid range.
-    // Real obfuscation reversal would give the exact DC.
-    let raw = i16::from_le_bytes([h[60], h[61]]);
-    let dc = raw.unsigned_abs() as usize;
-    if dc == 0 || dc > DC_ADDRS.len() {
-        // Default to DC2 — statistically the most common home DC
-        1
-    } else {
-        dc - 1
-    }
-}
-
-/// Try primary DC address; fall back to secondary on failure.
-async fn connect_with_fallback(primary: &str, fallback: &str) -> io::Result<TcpStream> {
-    match timeout(CONNECT_TIMEOUT, TcpStream::connect(primary)).await {
-        Ok(Ok(s)) => return Ok(s),
-        Ok(Err(e)) => eprintln!("[dc-connect] primary {primary} failed: {e}"),
-        Err(_) => eprintln!("[dc-connect] primary {primary} timed out"),
-    }
-    timeout(CONNECT_TIMEOUT, TcpStream::connect(fallback))
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DC connect timeout"))?
-}
-
-// ─── CLI argument parsing ─────────────────────────────────────────────────────
+// ─── Command Line Parser ──────────────────────────────────────────────────────
 
 fn parse_args() -> Config {
-    let mut args = pico_args::Arguments::from_env();
+    let mut args = pico-args::Arguments::from_env();
 
-    // --help
     if args.contains(["-h", "--help"]) {
-        eprintln!("{}", concat!(
+        println!("{}", concat!(
             "Usage: tg-ws-proxy [--port <PORT>] [--secret <HEX>]\n",
             "\n",
             "Options:\n",
@@ -279,13 +623,18 @@ fn parse_args() -> Config {
         .expect("invalid --secret value")
         .unwrap_or_else(|| "ee155b2ebbd93854830e71195db68a6cdd".to_string());
 
-    // Decode hex → bytes; pad or truncate to exactly 16 bytes
     let decoded = hex::decode(secret_hex.trim_start_matches("0x"))
-        .unwrap_or_else(|e| panic!("--secret must be valid hex: {e}"));
+        .expect("Secret must be valid hex chars");
+
+    if decoded.len() != SECRET_LEN {
+        panic!("Secret must be exactly 16 bytes (32 hex characters)");
+    }
 
     let mut secret = [0u8; SECRET_LEN];
-    let copy_len = decoded.len().min(SECRET_LEN);
-    secret[..copy_len].copy_from_slice(&decoded[..copy_len]);
+    secret.copy_from_slice(&decoded);
 
-    Config { port, secret: Arc::new(secret) }
+    Config {
+        port,
+        secret: Arc::new(secret),
+    }
 }
