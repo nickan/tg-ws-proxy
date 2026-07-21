@@ -266,6 +266,47 @@ where
     }
 }
 
+enum ClientReader<R> {
+    Tls(FakeTlsReader<R>),
+    Plain(R),
+}
+
+impl<R: AsyncRead + Unpin> ClientReader<R> {
+    async fn read_payload(&mut self) -> io::Result<Vec<u8>> {
+        match self {
+            ClientReader::Tls(r) => r.read_tls_payload().await,
+            ClientReader::Plain(r) => {
+                let mut buf = vec![0u8; 16384];
+                let n = r.read(&mut buf).await?;
+                if n == 0 { return Ok(Vec::new()); }
+                buf.truncate(n);
+                Ok(buf)
+            }
+        }
+    }
+}
+
+enum ClientWriter<W> {
+    Tls(FakeTlsWriter<W>),
+    Plain(W),
+}
+
+impl<W: AsyncWrite + Unpin> ClientWriter<W> {
+    async fn write_payload(&mut self, data: &[u8]) -> io::Result<()> {
+        match self {
+            ClientWriter::Tls(w) => w.write_all(data).await,
+            ClientWriter::Plain(w) => w.write_all(data).await,
+        }
+    }
+    
+    async fn flush_payload(&mut self) -> io::Result<()> {
+        match self {
+            ClientWriter::Tls(w) => w.flush().await,
+            ClientWriter::Plain(w) => w.flush().await,
+        }
+    }
+}
+
 // ─── obfs2 & MTProto Deobfuscation Helpers ─────────────────────────────────────
 
 fn try_handshake(handshake: &[u8; 64], secret: &[u8]) -> Option<(i16, bool, [u8; 4], Vec<u8>)> {
@@ -344,8 +385,6 @@ fn generate_relay_init(proto_tag: [u8; 4], dc_idx: i16) -> Vec<u8> {
     result[56..64].copy_from_slice(&encrypted_tail);
     result
 }
-
-// ─── Crypto Context ───────────────────────────────────────────────────────────
 
 // ─── Crypto Context ───────────────────────────────────────────────────────────
 
@@ -489,44 +528,63 @@ async fn handle_client(
 ) -> io::Result<()> {
     client.set_nodelay(true)?;
 
-    // 1. Read TLS ClientHello
+    // 1. Read first 5 bytes to determine protocol (obfs2 or FakeTLS)
     let mut initial_hdr = [0u8; 5];
     timeout(HANDSHAKE_TIMEOUT, client.read_exact(&mut initial_hdr))
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ClientHello header timeout"))??;
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Handshake header timeout"))??;
 
-    if initial_hdr[0] != 0x16 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Expected TLS Handshake (0x16), got 0x{:02X} (hdr: {:?})", initial_hdr[0], initial_hdr)
-        ));
-    }
+    let is_faketls = initial_hdr[0] == 0x16;
 
-    let record_len = u16::from_be_bytes([initial_hdr[3], initial_hdr[4]]) as usize;
-    let mut client_hello = vec![0u8; record_len];
-    timeout(HANDSHAKE_TIMEOUT, client.read_exact(&mut client_hello))
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ClientHello body timeout"))??;
+    let (dc_id, is_media, proto_tag, client_dec_prekey_iv, client_reader, client_writer) = if is_faketls {
+        let record_len = u16::from_be_bytes([initial_hdr[3], initial_hdr[4]]) as usize;
+        let mut client_hello = vec![0u8; record_len];
+        timeout(HANDSHAKE_TIMEOUT, client.read_exact(&mut client_hello))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ClientHello body timeout"))??;
 
-    let mut full_hello = initial_hdr.to_vec();
-    full_hello.extend_from_slice(&client_hello);
+        let mut full_hello = initial_hdr.to_vec();
+        full_hello.extend_from_slice(&client_hello);
 
-    let (client_random, session_id, _) = verify_client_hello(&full_hello, cfg.secret.as_ref())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid FakeTLS ClientHello"))?;
+        let (client_random, session_id, _) = verify_client_hello(&full_hello, cfg.secret.as_ref())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid FakeTLS ClientHello"))?;
 
-    // 2. Reply ServerHello
-    let server_hello = build_server_hello(cfg.secret.as_ref(), &client_random, &session_id);
-    client.write_all(&server_hello).await?;
+        // Reply ServerHello
+        let server_hello = build_server_hello(cfg.secret.as_ref(), &client_random, &session_id);
+        client.write_all(&server_hello).await?;
 
-    // 3. Read client's obfs2 handshake inside TLS Wrapper
-    let mut tls_reader = FakeTlsReader::new(client);
-    let handshake_bytes = tls_reader.read_exactly(64).await?;
-    let handshake: [u8; 64] = handshake_bytes.try_into().unwrap();
+        // Read client's obfs2 handshake inside TLS Wrapper
+        let mut tls_reader = FakeTlsReader::new(client);
+        let handshake_bytes = tls_reader.read_exactly(64).await?;
+        let handshake: [u8; 64] = handshake_bytes.try_into().unwrap();
 
-    let (dc_id, is_media, proto_tag, client_dec_prekey_iv) = try_handshake(&handshake, cfg.secret.as_ref())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid obfs2 handshake inside TLS"))?;
+        let (dc_id, is_media, proto_tag, client_dec_prekey_iv) = try_handshake(&handshake, cfg.secret.as_ref())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid obfs2 handshake inside TLS"))?;
 
-    println!("[{peer}] → DC{} (media={})", dc_id, is_media);
+        let (cr, cw) = tokio::io::split(tls_reader.inner);
+        let tls_reader = FakeTlsReader::new(cr);
+        let tls_writer = FakeTlsWriter::new(cw);
+
+        (dc_id, is_media, proto_tag, client_dec_prekey_iv, ClientReader::Tls(tls_reader), ClientWriter::Tls(tls_writer))
+    } else {
+        // Raw obfs2 flow
+        let mut rest_handshake = [0u8; 59];
+        timeout(HANDSHAKE_TIMEOUT, client.read_exact(&mut rest_handshake))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "obfs2 handshake body timeout"))??;
+
+        let mut handshake = [0u8; 64];
+        handshake[..5].copy_from_slice(&initial_hdr);
+        handshake[5..].copy_from_slice(&rest_handshake);
+
+        let (dc_id, is_media, proto_tag, client_dec_prekey_iv) = try_handshake(&handshake, cfg.secret.as_ref())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid raw obfs2 handshake"))?;
+
+        let (cr, cw) = tokio::io::split(client);
+        (dc_id, is_media, proto_tag, client_dec_prekey_iv, ClientReader::Plain(cr), ClientWriter::Plain(cw))
+    };
+
+    println!("[{peer}] → DC{} (media={}, FakeTLS={})", dc_id, is_media, is_faketls);
 
     // 4. Connect to Cloudflare fronting WebSocket
     let mut ws_stream = None;
@@ -558,17 +616,13 @@ async fn handle_client(
     let (mut clt_dec, mut clt_enc, mut tg_enc, mut tg_dec) = build_crypto_ctx(&client_dec_prekey_iv, cfg.secret.as_ref(), &relay_init);
     let mut splitter = MsgSplitter::new(&client_dec_prekey_iv, cfg.secret.as_ref(), proto_tag);
 
-    // 7. Split FakeTlsStream into Reader & Writer
-    let (cr, cw) = tokio::io::split(tls_reader.inner);
-    let mut tls_reader = FakeTlsReader::new(cr);
-    let mut tls_writer = FakeTlsWriter::new(cw);
-
     let (mut ws_sink, mut ws_stream) = ws.split();
 
     // 8. Relay tasks
+    let mut client_reader = client_reader;
     let client_to_ws = async move {
         loop {
-            let payload = tls_reader.read_tls_payload().await?;
+            let payload = client_reader.read_payload().await?;
             if payload.is_empty() { break; }
             let mut plain = payload;
             clt_dec.apply_keystream(&mut plain); // decrypt
@@ -585,6 +639,7 @@ async fn handle_client(
         Ok::<(), io::Error>(())
     };
 
+    let mut client_writer = client_writer;
     let ws_to_client = async move {
         while let Some(msg) = ws_stream.next().await {
             let msg = msg.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("WS read error: {e}")))?;
@@ -592,12 +647,11 @@ async fn handle_client(
                 Message::Binary(data) => {
                     let mut plain = data;
                     tg_dec.apply_keystream(&mut plain); // decrypt
-
                     let mut cipher = plain;
                     clt_enc.apply_keystream(&mut cipher); // encrypt
 
-                    tls_writer.write_all(&cipher).await?;
-                    tls_writer.flush().await?;
+                    client_writer.write_payload(&cipher).await?;
+                    client_writer.flush_payload().await?;
                 }
                 Message::Close(_) => break,
                 _ => {}
