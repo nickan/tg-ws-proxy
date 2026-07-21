@@ -636,11 +636,12 @@ fn parse_args() -> Config {
         .expect("invalid --secret value")
         .unwrap_or_else(|| "ee155b2ebbd93854830e71195db68a6cdd".to_string());
 
-    let decoded = hex::decode(secret_hex.trim_start_matches("0x"))
-        .expect("Secret must be valid hex chars");
+    let secret_trimmed = secret_hex.trim().trim_start_matches("0x");
+    let decoded = hex::decode(secret_trimmed)
+        .unwrap_or_else(|e| panic!("Secret must be valid hex chars: '{}' (error: {})", secret_trimmed, e));
 
     if decoded.len() != SECRET_LEN {
-        panic!("Secret must be exactly 16 bytes (32 hex characters)");
+        panic!("Secret must be exactly 16 bytes (32 hex characters). Got {} bytes from '{}'", decoded.len(), secret_trimmed);
     }
 
     let mut secret = [0u8; SECRET_LEN];
