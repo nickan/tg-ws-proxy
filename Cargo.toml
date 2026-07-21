@@ -1,0 +1,45 @@
+[package]
+name        = "tg-ws-proxy"
+version     = "0.1.0"
+edition     = "2021"
+description = "Lightweight Telegram MTProxy relay over TCP/WebSocket (aarch64-musl)"
+authors     = ["your-name"]
+license     = "MIT"
+
+# --------------------------------------------------------------------------
+# Binary optimizations — target < 2 MB stripped musl binary
+# --------------------------------------------------------------------------
+[profile.release]
+opt-level     = "z"        # optimize for binary size
+lto           = true       # link-time optimization (strips dead code)
+codegen-units = 1          # single codegen unit → better LTO
+panic         = "abort"    # no unwinding machinery (~50 KB saved)
+strip         = true       # strip debug symbols
+debug         = false
+
+# --------------------------------------------------------------------------
+# Dependencies — kept to absolute minimum
+# --------------------------------------------------------------------------
+[dependencies]
+# Async runtime — only the features we actually use
+tokio = { version = "1", default-features = false, features = [
+    "net",        # TcpListener / TcpStream
+    "io-util",    # copy_bidirectional
+    "rt-multi-thread",
+    "macros",
+    "time",       # timeout
+    "signal",     # graceful shutdown
+] }
+
+# Argument parsing — zero-alloc, no proc-macros
+pico-args = "0.5"
+
+# Hex decoding for --secret validation (tiny, no_std compatible)
+hex = { version = "0.4", default-features = false }
+
+# --------------------------------------------------------------------------
+# Build metadata
+# --------------------------------------------------------------------------
+[package.metadata.cross.target.aarch64-unknown-linux-musl]
+# Cross-compilation config — see build instructions in src/main.rs
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
