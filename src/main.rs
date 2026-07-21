@@ -496,7 +496,10 @@ async fn handle_client(
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ClientHello header timeout"))??;
 
     if initial_hdr[0] != 0x16 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected TLS Handshake"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Expected TLS Handshake (0x16), got 0x{:02X} (hdr: {:?})", initial_hdr[0], initial_hdr)
+        ));
     }
 
     let record_len = u16::from_be_bytes([initial_hdr[3], initial_hdr[4]]) as usize;
