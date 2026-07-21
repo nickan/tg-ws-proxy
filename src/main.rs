@@ -1,7 +1,7 @@
 //! tg-ws-proxy — Lightweight Telegram MTProxy WebSocket Bypass Relay in Rust
 //!
 //! Architecture:
-//!   Client ──[FakeTLS TCP]──► [tg-ws-proxy :8443] ──[WSS WebSocket]──► Cloudflare ──► Telegram DC
+//!   Client ──[FakeTLS/obfs2 TCP]──► [tg-ws-proxy :8443] ──[WSS Fronted WebSocket]──► Cloudflare ──► Telegram DC
 //!
 
 use std::{
@@ -20,7 +20,6 @@ use tokio::{
     time::timeout,
 };
 use tokio_tungstenite::{
-    connect_async,
     tungstenite::Message,
 };
 
@@ -298,7 +297,7 @@ impl<W: AsyncWrite + Unpin> ClientWriter<W> {
             ClientWriter::Plain(w) => w.write_all(data).await,
         }
     }
-    
+
     async fn flush_payload(&mut self) -> io::Result<()> {
         match self {
             ClientWriter::Tls(w) => w.flush().await,
@@ -521,6 +520,66 @@ impl MsgSplitter {
 
 // ─── Connection Handler ───────────────────────────────────────────────────────
 
+async fn connect_fronted(
+    dc_id: i16,
+    domain: &str,
+) -> io::Result<tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let target_host = format!("kws{dc_id}.{domain}");
+    
+    // Resolve IPs of target host
+    let addrs = tokio::net::lookup_host(format!("{}:443", target_host)).await?
+        .collect::<Vec<_>>();
+    if addrs.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "Failed to resolve host"));
+    }
+    
+    // Connect to the first resolved Cloudflare IP
+    let tcp = TcpStream::connect(addrs[0]).await?;
+    tcp.set_nodelay(true)?;
+
+    // Prepare TLS config
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add_trust_anchors(
+        webpki_roots::TLS_SERVER_ROOTS
+            .iter()
+            .map(|ta| {
+                rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                    ta.subject,
+                    ta.spki,
+                    ta.name_constraints,
+                )
+            })
+    );
+
+    let config = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let domain_sni = rustls::ServerName::try_from("sprinthost.ru")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid SNI: {e}")))?;
+
+    let tls_stream = connector.connect(domain_sni, tcp).await?;
+
+    // Perform WebSocket handshake
+    let request_url = format!("wss://{}/apiws", target_host);
+    let mut request = request_url.into_client_request()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid WSS URL: {e}")))?;
+
+    request.headers_mut().insert(
+        tokio_tungstenite::tungstenite::http::header::HOST,
+        target_host.parse().unwrap()
+    );
+
+    let (ws, _) = tokio_tungstenite::client_async(request, tls_stream).await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("WS handshake failed: {e}")))?;
+
+    Ok(ws)
+}
+
 async fn handle_client(
     mut client: TcpStream,
     peer: SocketAddr,
@@ -589,18 +648,15 @@ async fn handle_client(
     // 4. Connect to Cloudflare fronting WebSocket
     let mut ws_stream = None;
     for &domain in DOMAINS {
-        // Build websocket target domain
-        let target_domain = format!("kws{dc_id}.{domain}");
-        let ws_url = format!("wss://{target_domain}/apiws");
-        println!("[{peer}] Trying domain: {}", target_domain);
+        println!("[{peer}] Trying domain: {}", domain);
 
-        match timeout(WS_CONNECT_TIMEOUT, connect_async(&ws_url)).await {
-            Ok(Ok((ws, _))) => {
+        match timeout(WS_CONNECT_TIMEOUT, connect_fronted(dc_id, domain)).await {
+            Ok(Ok(ws)) => {
                 ws_stream = Some(ws);
                 break;
             }
-            Ok(Err(e)) => println!("[{peer}] WSS connect failed on {target_domain}: {e}"),
-            Err(_) => println!("[{peer}] WSS connect timed out on {target_domain}"),
+            Ok(Err(e)) => println!("[{peer}] WSS connect failed on {domain}: {e}"),
+            Err(_) => println!("[{peer}] WSS connect timed out on {domain}"),
         }
     }
 
@@ -649,7 +705,7 @@ async fn handle_client(
                     tg_dec.apply_keystream(&mut plain); // decrypt
                     let mut cipher = plain;
                     clt_enc.apply_keystream(&mut cipher); // encrypt
-
+ 
                     client_writer.write_payload(&cipher).await?;
                     client_writer.flush_payload().await?;
                 }

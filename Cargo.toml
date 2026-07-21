@@ -44,6 +44,9 @@ ctr = "0.9"
 hmac = "0.12"
 sha2 = "0.10"
 getrandom = "0.2"
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+tokio-rustls = "0.24"
+webpki-roots = "0.25"
 tokio-tungstenite = { version = "0.20", features = ["rustls-tls-webpki-roots"] }
 
 # --------------------------------------------------------------------------
