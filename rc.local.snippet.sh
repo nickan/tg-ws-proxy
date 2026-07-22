@@ -147,7 +147,7 @@ FW_RULE_NAME="tg_ws_proxy_wan_in"
     fi
 
     # Sanity check: ELF magic bytes (0x7f 'E' 'L' 'F')
-    ELF_MAGIC=$(head -c 4 "${PROXY_BIN}" | od -An -tx1 | tr -d ' \n')
+    ELF_MAGIC=$(hexdump -n 4 -e '4/1 "%02x"' "${PROXY_BIN}" 2>/dev/null)
     if [ "${ELF_MAGIC}" != "7f454c46" ]; then
         echo "[!] Downloaded file is not an ELF binary (magic=${ELF_MAGIC}) — corrupted download?"
         rm -f "${PROXY_BIN}"

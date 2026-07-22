@@ -523,58 +523,28 @@ impl MsgSplitter {
 async fn connect_fronted(
     dc_id: i16,
     domain: &str,
-) -> io::Result<tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>> {
+) -> io::Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
     let target_host = format!("kws{dc_id}.{domain}");
+    let request_url = format!("wss://{target_host}/apiws");
     
-    // Resolve IPs of target host
-    let addrs = tokio::net::lookup_host(format!("{}:443", target_host)).await?
-        .collect::<Vec<_>>();
-    if addrs.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "Failed to resolve host"));
-    }
-    
-    // Connect to the first resolved Cloudflare IP
-    let tcp = TcpStream::connect(addrs[0]).await?;
-    tcp.set_nodelay(true)?;
-
-    // Prepare TLS config
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.add_trust_anchors(
-        webpki_roots::TLS_SERVER_ROOTS
-            .iter()
-            .map(|ta| {
-                rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                    ta.subject,
-                    ta.spki,
-                    ta.name_constraints,
-                )
-            })
-    );
-
-    let config = rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-    let domain_sni = rustls::ServerName::try_from("sprinthost.ru")
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid SNI: {e}")))?;
-
-    let tls_stream = connector.connect(domain_sni, tcp).await?;
-
-    // Perform WebSocket handshake
-    let request_url = format!("wss://{}/apiws", target_host);
     let mut request = request_url.into_client_request()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid WSS URL: {e}")))?;
 
+    // Set Host header explicitly
     request.headers_mut().insert(
         tokio_tungstenite::tungstenite::http::header::HOST,
         target_host.parse().unwrap()
     );
 
-    let (ws, _) = tokio_tungstenite::client_async(request, tls_stream).await
+    // Set Sec-WebSocket-Protocol header to binary (required by Telegram WS)
+    request.headers_mut().insert(
+        tokio_tungstenite::tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL,
+        "binary".parse().unwrap()
+    );
+
+    let (ws, _) = tokio_tungstenite::connect_async(request).await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("WS handshake failed: {e}")))?;
 
     Ok(ws)
