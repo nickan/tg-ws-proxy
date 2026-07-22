@@ -575,7 +575,7 @@ async fn connect_wss(
         let tcp = TcpStream::connect(&target_addr).await?;
         tcp.set_nodelay(true)?;
 
-        let request_url = "wss://sprinthost.ru/apiws";
+        let request_url = "wss://sprinthost.ru/apiws".to_string();
         let host_header = if is_media {
             format!("kws{dc_id}-1.web.telegram.org")
         } else {

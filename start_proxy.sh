@@ -22,7 +22,7 @@ if [ ! -f "${BIN}" ]; then
     echo "[!] Binary not in /tmp — downloading now..."
     curl -L --insecure --silent --show-error --connect-timeout 20 --max-time 60 \
         -o "${BIN}" \
-        "https://github.com/nickan/tg-ws-proxy/releases/download/v0.2.0/tg-ws-proxy-aarch64-musl"
+        "https://github.com/nickan/tg-ws-proxy/releases/download/v0.2.1/tg-ws-proxy-aarch64-musl"
 fi
 
 echo "[*] Binary size: $(wc -c < "${BIN}") bytes"
