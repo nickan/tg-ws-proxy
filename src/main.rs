@@ -446,15 +446,11 @@ struct MsgSplitter {
 }
 
 impl MsgSplitter {
-    fn new(client_dec_prekey_iv: &[u8], secret: &[u8], proto: [u8; 4]) -> Self {
-        let clt_dec_prekey = &client_dec_prekey_iv[..32];
-        let clt_dec_iv = &client_dec_prekey_iv[32..48];
-        let mut hasher = Sha256::new();
-        hasher.update(clt_dec_prekey);
-        hasher.update(secret);
-        let clt_dec_key = hasher.finalize();
+    fn new(relay_init: &[u8], proto: [u8; 4]) -> Self {
+        let relay_enc_key = &relay_init[8..40];
+        let relay_enc_iv = &relay_init[40..56];
 
-        let mut dec = Aes256Ctr::new_from_slices(&clt_dec_key, clt_dec_iv).unwrap();
+        let mut dec = Aes256Ctr::new_from_slices(relay_enc_key, relay_enc_iv).unwrap();
         let mut zero_64 = [0u8; 64];
         dec.apply_keystream(&mut zero_64);
 
@@ -722,7 +718,7 @@ async fn handle_client(
 
     // 6. Build Cryptography & Splitter
     let (mut clt_dec, mut clt_enc, mut tg_enc, mut tg_dec) = build_crypto_ctx(&client_dec_prekey_iv, cfg.secret.as_ref(), &relay_init);
-    let mut splitter = MsgSplitter::new(&client_dec_prekey_iv, cfg.secret.as_ref(), proto_tag);
+    let mut splitter = MsgSplitter::new(&relay_init, proto_tag);
 
     let (mut ws_sink, mut ws_stream) = ws.split();
 
