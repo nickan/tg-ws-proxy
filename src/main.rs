@@ -8,6 +8,7 @@ use std::{
     net::SocketAddr,
     sync::Arc,
     time::Duration,
+    time::SystemTime,
 };
 
 use aes::cipher::{KeyIvInit, StreamCipher};
@@ -21,7 +22,10 @@ use tokio::{
 };
 use tokio_tungstenite::{
     tungstenite::Message,
+    Connector,
 };
+use rustls::client::{ServerCertVerifier, ServerCertVerified, ServerName};
+use rustls::{Certificate, Error};
 
 type HmacSha256 = Hmac<Sha256>;
 type Aes256Ctr = ctr::Ctr128BE<aes::Aes256>;
@@ -520,22 +524,82 @@ impl MsgSplitter {
 
 // ─── Connection Handler ───────────────────────────────────────────────────────
 
-async fn connect_fronted(
+struct DummyVerifier;
+
+impl ServerCertVerifier for DummyVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &Certificate,
+        _intermediates: &[Certificate],
+        _server_name: &ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: SystemTime,
+    ) -> Result<ServerCertVerified, Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+}
+
+fn get_tls_connector() -> Connector {
+    let verifier = Arc::new(DummyVerifier);
+    let config = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    Connector::Rustls(Arc::new(config))
+}
+
+fn get_dc_ip(dc_id: i16) -> &'static str {
+    match dc_id.abs() {
+        1 => "149.154.175.50",
+        2 => "149.154.167.51",
+        3 => "149.154.175.100",
+        4 => "149.154.167.91",
+        5 => "149.154.171.5",
+        203 => "91.105.192.100",
+        _ => "149.154.167.51", // fallback to DC2
+    }
+}
+
+async fn connect_wss(
     dc_id: i16,
+    is_media: bool,
     domain: &str,
+    connector: Connector,
+    direct_ip: Option<&str>,
 ) -> io::Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-    let target_host = format!("kws{dc_id}.{domain}");
-    let request_url = format!("wss://{target_host}/apiws");
-    
+    let (tcp, request_url, host_header) = if let Some(ip) = direct_ip {
+        let target_addr = format!("{ip}:443");
+        let tcp = TcpStream::connect(&target_addr).await?;
+        tcp.set_nodelay(true)?;
+
+        let request_url = "wss://sprinthost.ru/apiws";
+        let host_header = if is_media {
+            format!("kws{dc_id}-1.web.telegram.org")
+        } else {
+            format!("kws{dc_id}.web.telegram.org")
+        };
+        (tcp, request_url, host_header)
+    } else {
+        let target_host = format!("kws{dc_id}.{domain}");
+        let target_addr = format!("{target_host}:443");
+        let tcp = TcpStream::connect(&target_addr).await?;
+        tcp.set_nodelay(true)?;
+
+        let request_url = format!("wss://{target_host}/apiws");
+        let host_header = target_host.clone();
+        (tcp, request_url, host_header)
+    };
+
     let mut request = request_url.into_client_request()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid WSS URL: {e}")))?;
 
     // Set Host header explicitly
     request.headers_mut().insert(
         tokio_tungstenite::tungstenite::http::header::HOST,
-        target_host.parse().unwrap()
+        host_header.parse().unwrap()
     );
 
     // Set Sec-WebSocket-Protocol header to binary (required by Telegram WS)
@@ -544,7 +608,7 @@ async fn connect_fronted(
         "binary".parse().unwrap()
     );
 
-    let (ws, _) = tokio_tungstenite::connect_async(request).await
+    let (ws, _) = tokio_tungstenite::client_async_tls_with_config(request, tcp, None, Some(connector)).await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("WS handshake failed: {e}")))?;
 
     Ok(ws)
@@ -615,18 +679,36 @@ async fn handle_client(
 
     println!("[{peer}] → DC{} (media={}, FakeTLS={})", dc_id, is_media, is_faketls);
 
-    // 4. Connect to Cloudflare fronting WebSocket
+    // 4. Connect to WSS backend
     let mut ws_stream = None;
-    for &domain in DOMAINS {
-        println!("[{peer}] Trying domain: {}", domain);
+    let connector = get_tls_connector();
 
-        match timeout(WS_CONNECT_TIMEOUT, connect_fronted(dc_id, domain)).await {
-            Ok(Ok(ws)) => {
-                ws_stream = Some(ws);
-                break;
+    // Try direct connection first
+    let dc_ip = get_dc_ip(dc_id);
+    println!("[{peer}] Trying direct connection to DC{} at {} with fake SNI", dc_id, dc_ip);
+    match timeout(WS_CONNECT_TIMEOUT, connect_wss(dc_id, is_media, "", connector.clone(), Some(dc_ip))).await {
+        Ok(Ok(ws)) => {
+            println!("[{peer}] Direct connection succeeded");
+            ws_stream = Some(ws);
+        }
+        Ok(Err(e)) => println!("[{peer}] Direct connect failed: {e}"),
+        Err(_) => println!("[{peer}] Direct connect timed out"),
+    }
+
+    if ws_stream.is_none() {
+        println!("[{peer}] Direct connection failed, falling back to Cloudflare fronting");
+        for &domain in DOMAINS {
+            println!("[{peer}] Trying domain: {}", domain);
+
+            match timeout(WS_CONNECT_TIMEOUT, connect_wss(dc_id, is_media, domain, connector.clone(), None)).await {
+                Ok(Ok(ws)) => {
+                    println!("[{peer}] WSS connect succeeded on {domain}");
+                    ws_stream = Some(ws);
+                    break;
+                }
+                Ok(Err(e)) => println!("[{peer}] WSS connect failed on {domain}: {e}"),
+                Err(_) => println!("[{peer}] WSS connect timed out on {domain}"),
             }
-            Ok(Err(e)) => println!("[{peer}] WSS connect failed on {domain}: {e}"),
-            Err(_) => println!("[{peer}] WSS connect timed out on {domain}"),
         }
     }
 
