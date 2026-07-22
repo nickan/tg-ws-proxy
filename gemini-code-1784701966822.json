@@ -1,0 +1,113 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns_proxy",
+        "address": "1.1.1.1",
+        "address_resolver": "dns_direct",
+        "strategy": "ipv4_only",
+        "detour": "proxy"
+      },
+      {
+        "tag": "dns_direct",
+        "address": "1.0.0.1",
+        "strategy": "ipv4_only",
+        "detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": ["russia-blocked", "russia-youtube"],
+        "server": "dns_proxy"
+      }
+    ],
+    "final": "dns_direct"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "tun0",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "217.217.244.111",
+      "server_port": 443,
+      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "differencescope.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
+          "short_id": "6ba85179e30d4fc2"
+        }
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "final": "direct",
+    "rule_set": [
+      {
+        "tag": "russia-blocked",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/nickan/tg-ws-proxy/master/rules/russia-blocked.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "russia-youtube",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/nickan/tg-ws-proxy/master/rules/russia-youtube.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "ip_cidr": [
+          "217.217.244.111/32"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "russia-blocked",
+          "russia-youtube"
+        ],
+        "outbound": "proxy"
+      }
+    ]
+  }
+}
