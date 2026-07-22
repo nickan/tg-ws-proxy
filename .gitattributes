@@ -1,0 +1,5 @@
+# Treat sing-box binary rulesets as binary files (no CRLF conversion)
+*.srs binary
+
+# Shell scripts: always LF
+*.sh text eol=lf
