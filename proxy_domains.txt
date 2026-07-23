@@ -1,0 +1,52 @@
+# ==============================================================================
+# СПИСОК ДОМЕНОВ ДЛЯ МАРШРУТИЗАЦИИ ЧЕРЕЗ VLESS VPN
+# ==============================================================================
+# Формат: каждая строка — домен или суффикс домена.
+# Для добавления нового сайта просто добавьте его с новой строки!
+# Строки, начинающиеся с символа # — это комментарии и они игнорируются.
+#
+# Как применить изменения:
+# Вариант 1 (с ПК): Отредактируйте этот файл и запустите .\deploy_singbox.ps1
+# Вариант 2 (на роутере): Отредактируйте /etc/proxy_domains.txt и запустите /etc/start_singbox.sh
+# ==============================================================================
+
+# --- Нейросети (AI & Neural Networks) ---
+# OpenAI & ChatGPT
+openai.com
+chatgpt.com
+oaistatic.com
+oaiusercontent.com
+chatgpt.live
+
+# Anthropic & Claude
+anthropic.com
+claude.ai
+claude.usercontent.com
+
+# Google Gemini & AI Studio
+gemini.google.com
+generativelanguage.googleapis.com
+aistudio.google.com
+alkalimakersuite-pa.clients6.google.com
+
+# Perplexity AI
+perplexity.ai
+labs.perplexity.ai
+
+# Midjourney
+midjourney.com
+
+# DeepSeek AI
+deepseek.com
+
+# Microsoft Copilot & Bing AI
+copilot.microsoft.com
+sydney.bing.com
+
+# --- Telegram (Телеграм) ---
+t.me
+telegram.org
+telegram.me
+telega.one
+telegram.dog
+tg.dev

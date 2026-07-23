@@ -1,15 +1,21 @@
 #!/bin/sh
-# deploy_singbox.sh - Deploy sing-box VPN to OpenWrt router
+# deploy_singbox.sh - Deploy sing-box VPN and custom domain list to OpenWrt router
 
 ROUTER_IP="192.168.1.1"
 ROUTER_USER="root"
-CONFIG_FILE="gemini-code-1784701966822.json"
+CONFIG_FILE="singbox.json"
+DOMAIN_FILE="proxy_domains.txt"
 START_SCRIPT="start_singbox.sh"
 
 echo "=== Deploying sing-box VPN to OpenWrt ($ROUTER_IP) ==="
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "[!] Error: Local config $CONFIG_FILE not found!"
+    exit 1
+fi
+
+if [ ! -f "$DOMAIN_FILE" ]; then
+    echo "[!] Error: Local domain list $DOMAIN_FILE not found!"
     exit 1
 fi
 
@@ -20,6 +26,9 @@ fi
 
 echo "[*] Uploading configuration file..."
 scp "$CONFIG_FILE" "${ROUTER_USER}@${ROUTER_IP}:/etc/singbox.json"
+
+echo "[*] Uploading domain list..."
+scp "$DOMAIN_FILE" "${ROUTER_USER}@${ROUTER_IP}:/etc/proxy_domains.txt"
 
 echo "[*] Uploading startup script..."
 scp "$START_SCRIPT" "${ROUTER_USER}@${ROUTER_IP}:/etc/start_singbox.sh"

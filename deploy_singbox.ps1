@@ -2,7 +2,8 @@
 
 $RouterIP = "192.168.1.1"
 $RouterUser = "root"
-$ConfigFile = "gemini-code-1784701966822.json"
+$ConfigFile = "singbox.json"
+$DomainFile = "proxy_domains.txt"
 $StartScript = "start_singbox.sh"
 
 Write-Host "=== Deploying sing-box VPN to OpenWrt ($RouterIP) ===" -ForegroundColor Cyan
@@ -12,6 +13,10 @@ if (-not (Test-Path $ConfigFile)) {
     Write-Error "Local configuration file '$ConfigFile' not found!"
     exit 1
 }
+if (-not (Test-Path $DomainFile)) {
+    Write-Error "Local domain list '$DomainFile' not found!"
+    exit 1
+}
 if (-not (Test-Path $StartScript)) {
     Write-Error "Local startup script '$StartScript' not found!"
     exit 1
@@ -19,28 +24,36 @@ if (-not (Test-Path $StartScript)) {
 
 # 2. Upload configuration file to /etc/singbox.json
 Write-Host "[*] Uploading configuration file..." -ForegroundColor Yellow
-scp $ConfigFile "${RouterUser}@${RouterIP}:/etc/singbox.json"
+Get-Content $ConfigFile -Raw -Encoding UTF8 | ssh "${RouterUser}@${RouterIP}" "cat > /etc/singbox.json"
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to upload configuration file via SCP!"
+    Write-Error "Failed to upload configuration file!"
     exit 1
 }
 Write-Host "[+] Config uploaded to /etc/singbox.json" -ForegroundColor Green
 
-# 3. Upload start script to /etc/start_singbox.sh
-Write-Host "[*] Uploading startup script..." -ForegroundColor Yellow
-scp $StartScript "${RouterUser}@${RouterIP}:/etc/start_singbox.sh"
+# 3. Upload domain list to /etc/proxy_domains.txt
+Write-Host "[*] Uploading domain list..." -ForegroundColor Yellow
+Get-Content $DomainFile -Raw -Encoding UTF8 | ssh "${RouterUser}@${RouterIP}" "cat > /etc/proxy_domains.txt"
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to upload startup script via SCP!"
+    Write-Error "Failed to upload domain list!"
+    exit 1
+}
+Write-Host "[+] Domain list uploaded to /etc/proxy_domains.txt" -ForegroundColor Green
+
+# 4. Upload start script to /etc/start_singbox.sh
+Write-Host "[*] Uploading startup script..." -ForegroundColor Yellow
+Get-Content $StartScript -Raw -Encoding UTF8 | ssh "${RouterUser}@${RouterIP}" "cat > /etc/start_singbox.sh"
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to upload startup script!"
     exit 1
 }
 Write-Host "[+] Script uploaded to /etc/start_singbox.sh" -ForegroundColor Green
 
-# 4. Make script executable and configure autostart via SSH
+# 5. Make script executable and configure autostart via SSH
 Write-Host "[*] Configuring and executing on router..." -ForegroundColor Yellow
 $RemoteCommands = @'
 chmod +x /etc/start_singbox.sh
 
-# Enable autostart on boot in /etc/rc.local if not already done
 if ! grep -q "start_singbox.sh" /etc/rc.local; then
     echo "[*] Injecting startup command into /etc/rc.local..."
     cp /etc/rc.local /etc/rc.local.bak 2>/dev/null || true
@@ -54,7 +67,6 @@ else
     echo "[*] Autostart already configured in /etc/rc.local"
 fi
 
-# Run the startup script immediately to download and run sing-box
 echo "[*] Executing /etc/start_singbox.sh..."
 sh /etc/start_singbox.sh
 '@

@@ -21,7 +21,7 @@
     ],
     "rules": [
       {
-        "rule_set": ["russia-blocked", "russia-youtube"],
+        "rule_set": ["custom-domains", "russia-blocked", "russia-youtube"],
         "server": "dns_proxy"
       }
     ],
@@ -72,6 +72,12 @@
     "final": "direct",
     "rule_set": [
       {
+        "tag": "custom-domains",
+        "type": "local",
+        "format": "source",
+        "path": "/etc/singbox_domains.json"
+      },
+      {
         "tag": "russia-blocked",
         "type": "remote",
         "format": "binary",
@@ -102,7 +108,20 @@
         "outbound": "direct"
       },
       {
+        "ip_cidr": [
+          "91.108.4.0/22",
+          "91.108.8.0/22",
+          "91.108.12.0/22",
+          "91.108.16.0/22",
+          "91.108.56.0/22",
+          "149.154.160.0/20",
+          "149.154.164.0/22"
+        ],
+        "outbound": "proxy"
+      },
+      {
         "rule_set": [
+          "custom-domains",
           "russia-blocked",
           "russia-youtube"
         ],
