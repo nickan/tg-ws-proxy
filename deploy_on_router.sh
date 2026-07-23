@@ -2,29 +2,30 @@
 # deploy_on_router.sh - One-line deploy script to fetch VPN files from GitHub to OpenWrt
 
 REPO_RAW="https://raw.githubusercontent.com/nickan/tg-ws-proxy/master"
+CACHE_BUSTER=$(date +%s)
 
 echo "=== Deploying VLESS VPN from GitHub (nickan/tg-ws-proxy) ==="
 
-# 1. Download configuration files from GitHub
+# 1. Download configuration files from GitHub (bypassing CDN cache)
 echo "[*] Fetching singbox.json..."
 if command -v curl >/dev/null 2>&1; then
-    curl -sSL -k "${REPO_RAW}/singbox.json" -o /etc/singbox.json
+    curl -sSL -k -H "Cache-Control: no-cache" "${REPO_RAW}/singbox.json?t=${CACHE_BUSTER}" -o /etc/singbox.json
 elif command -v wget >/dev/null 2>&1; then
-    wget --no-check-certificate -qO /etc/singbox.json "${REPO_RAW}/singbox.json"
+    wget --no-check-certificate --no-cache -qO /etc/singbox.json "${REPO_RAW}/singbox.json?t=${CACHE_BUSTER}"
 fi
 
 echo "[*] Fetching proxy_domains.txt..."
 if command -v curl >/dev/null 2>&1; then
-    curl -sSL -k "${REPO_RAW}/proxy_domains.txt" -o /etc/proxy_domains.txt
+    curl -sSL -k -H "Cache-Control: no-cache" "${REPO_RAW}/proxy_domains.txt?t=${CACHE_BUSTER}" -o /etc/proxy_domains.txt
 elif command -v wget >/dev/null 2>&1; then
-    wget --no-check-certificate -qO /etc/proxy_domains.txt "${REPO_RAW}/proxy_domains.txt"
+    wget --no-check-certificate --no-cache -qO /etc/proxy_domains.txt "${REPO_RAW}/proxy_domains.txt?t=${CACHE_BUSTER}"
 fi
 
 echo "[*] Fetching start_singbox.sh..."
 if command -v curl >/dev/null 2>&1; then
-    curl -sSL -k "${REPO_RAW}/start_singbox.sh" -o /etc/start_singbox.sh
+    curl -sSL -k -H "Cache-Control: no-cache" "${REPO_RAW}/start_singbox.sh?t=${CACHE_BUSTER}" -o /etc/start_singbox.sh
 elif command -v wget >/dev/null 2>&1; then
-    wget --no-check-certificate -qO /etc/start_singbox.sh "${REPO_RAW}/start_singbox.sh"
+    wget --no-check-certificate --no-cache -qO /etc/start_singbox.sh "${REPO_RAW}/start_singbox.sh?t=${CACHE_BUSTER}"
 fi
 
 chmod +x /etc/start_singbox.sh

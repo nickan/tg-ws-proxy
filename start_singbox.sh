@@ -84,14 +84,15 @@ EOF
     fi
     echo "[+] Network is online"
 
-    # 2. Try updating proxy_domains.txt and singbox.json from GitHub
+    # 2. Try updating proxy_domains.txt and singbox.json from GitHub (bypassing CDN cache)
+    CACHE_BUSTER=$(date +%s)
     echo "[*] Checking GitHub (${REPO_RAW}) for config updates..."
     if command -v curl > /dev/null 2>&1; then
-        curl -sSL -k --connect-timeout 10 "${REPO_RAW}/proxy_domains.txt" -o /tmp/proxy_domains.txt.new 2>/dev/null
-        curl -sSL -k --connect-timeout 10 "${REPO_RAW}/singbox.json" -o /tmp/singbox.json.new 2>/dev/null
+        curl -sSL -k -H "Cache-Control: no-cache" --connect-timeout 10 "${REPO_RAW}/proxy_domains.txt?t=${CACHE_BUSTER}" -o /tmp/proxy_domains.txt.new 2>/dev/null
+        curl -sSL -k -H "Cache-Control: no-cache" --connect-timeout 10 "${REPO_RAW}/singbox.json?t=${CACHE_BUSTER}" -o /tmp/singbox.json.new 2>/dev/null
     elif command -v wget > /dev/null 2>&1; then
-        wget --no-check-certificate -q -T 10 -O /tmp/proxy_domains.txt.new "${REPO_RAW}/proxy_domains.txt" 2>/dev/null
-        wget --no-check-certificate -q -T 10 -O /tmp/singbox.json.new "${REPO_RAW}/singbox.json" 2>/dev/null
+        wget --no-check-certificate --no-cache -q -T 10 -O /tmp/proxy_domains.txt.new "${REPO_RAW}/proxy_domains.txt?t=${CACHE_BUSTER}" 2>/dev/null
+        wget --no-check-certificate --no-cache -q -T 10 -O /tmp/singbox.json.new "${REPO_RAW}/singbox.json?t=${CACHE_BUSTER}" 2>/dev/null
     fi
 
     if [ -s /tmp/proxy_domains.txt.new ]; then
