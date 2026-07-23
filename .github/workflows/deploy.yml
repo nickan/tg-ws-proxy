@@ -1,0 +1,34 @@
+name: Validate & Deploy VLESS Configuration
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate VPN Configuration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate JSON syntax of singbox.json
+        run: |
+          python3 -m json.tool singbox.json > /dev/null
+          echo "singbox.json is valid JSON!"
+
+      - name: Verify proxy_domains.txt
+        run: |
+          DOMAIN_COUNT=$(grep -v '^[[:space:]]*#' proxy_domains.txt | grep -v '^[[:space:]]*$' | wc -l)
+          echo "Total domains in proxy_domains.txt: ${DOMAIN_COUNT}"
+          if [ "${DOMAIN_COUNT}" -eq 0 ]; then
+            echo "Error: proxy_domains.txt is empty!"
+            exit 1
+          fi
+
+      - name: Configuration Status
+        run: |
+          echo "VLESS VPN configuration and domain rules are ready for OpenWrt deployment!"

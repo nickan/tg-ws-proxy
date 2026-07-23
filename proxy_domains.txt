@@ -6,7 +6,7 @@
 # Строки, начинающиеся с символа # — это комментарии и они игнорируются.
 #
 # Как применить изменения:
-# Вариант 1 (с ПК): Отредактируйте этот файл и запустите .\deploy_singbox.ps1
+# Вариант 1 (с ПК): Отредактируйте этот файл и сделайте git commit && git push
 # Вариант 2 (на роутере): Отредактируйте /etc/proxy_domains.txt и запустите /etc/start_singbox.sh
 # ==============================================================================
 
@@ -23,11 +23,27 @@ anthropic.com
 claude.ai
 claude.usercontent.com
 
-# Google Gemini & AI Studio
+# Google Gemini, Antigravity IDE, Google Flow & Google Nano (Нанобанан)
 gemini.google.com
 generativelanguage.googleapis.com
 aistudio.google.com
 alkalimakersuite-pa.clients6.google.com
+proactivebackend-pa.googleapis.com
+cloudcode.googleapis.com
+deepmind.google
+ai.google
+ai.google.dev
+antigravity.google
+antigravity.dev
+flow.google
+flow.google.com
+vflow.google
+vflow.google.com
+vertexai.googleapis.com
+imagen.google
+imagen.research.google
+nanobanan.google
+labs.google
 
 # Perplexity AI
 perplexity.ai
