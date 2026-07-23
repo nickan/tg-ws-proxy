@@ -1,0 +1,109 @@
+{
+  "dns": {
+    "client_subnet": "0.0.0.0/0",
+      "final": "dns_proxy",
+        "independent_cache": true,
+          "rules": [],
+            "servers": [
+              {
+                "detour": "proxy",
+                "server": "1.1.1.1",
+                "tag": "dns_proxy",
+                "type": "tcp"
+              },
+              {
+                "server": "1.0.0.1",
+                "tag": "dns_direct",
+                "type": "udp"
+              }
+            ],
+              "strategy": "ipv4_only"
+  },
+  "endpoints": [],
+    "inbounds": [
+      {
+        "address": [
+          "10.0.0.1/30"
+        ],
+        "auto_route": true,
+        "mtu": 1500,
+        "stack": "mixed",
+        "strict_route": true,
+        "tag": "tun-in",
+        "type": "tun"
+      }
+    ],
+      "log": {
+    "level": "info",
+      "timestamp": true
+  },
+  "outbounds": [
+    {
+      "flow": "xtls-rprx-vision",
+      "multiplex": {},
+      "server": "64.137.54.68",
+      "server_port": 443,
+      "tag": "proxy",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
+          "short_id": "6ba85179e30d4fc2"
+        },
+        "server_name": "unitbook.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "qq"
+        }
+      },
+      "transport": {},
+      "type": "vless",
+      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c"
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    }
+  ],
+    "route": {
+    "auto_detect_interface": true,
+      "default_domain_resolver": {
+      "server": "dns_proxy",
+        "strategy": "ipv4_only"
+    },
+    "final": "proxy",
+      "rules": [
+        {
+          "action": "sniff"
+        },
+        {
+          "action": "hijack-dns",
+          "mode": "or",
+          "rules": [
+            {
+              "protocol": "dns"
+            },
+            {
+              "port": 53
+            }
+          ],
+          "type": "logical"
+        },
+        {
+          "ip_is_private": true,
+          "outbound": "direct"
+        },
+        {
+          "ip_cidr": [
+            "64.137.54.68/32"
+          ],
+          "outbound": "direct"
+        },
+        {
+          "domain": "ip.accessly.app",
+          "outbound": "proxy"
+        }
+      ]
+  }
+}

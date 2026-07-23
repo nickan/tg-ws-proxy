@@ -42,8 +42,20 @@
   ],
   "outbounds": [
     {
-      "type": "vless",
+      "type": "urltest",
       "tag": "proxy",
+      "outbounds": [
+        "latvia",
+        "netherlands",
+        "sweden"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "tolerance": 50
+    },
+    {
+      "type": "vless",
+      "tag": "latvia",
       "server": "217.217.244.111",
       "server_port": 443,
       "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
@@ -51,6 +63,48 @@
       "tls": {
         "enabled": true,
         "server_name": "differencescope.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
+          "short_id": "6ba85179e30d4fc2"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "netherlands",
+      "server": "64.137.54.68",
+      "server_port": 443,
+      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "unitbook.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
+          "short_id": "6ba85179e30d4fc2"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "sweden",
+      "server": "194.190.69.69",
+      "server_port": 443,
+      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "jsoncraft.org",
         "utls": {
           "enabled": true,
           "fingerprint": "chrome"
@@ -103,7 +157,9 @@
       },
       {
         "ip_cidr": [
-          "217.217.244.111/32"
+          "217.217.244.111/32",
+          "64.137.54.68/32",
+          "194.190.69.69/32"
         ],
         "outbound": "direct"
       },
