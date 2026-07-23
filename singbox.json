@@ -3,30 +3,6 @@
     "level": "info",
     "timestamp": true
   },
-  "dns": {
-    "servers": [
-      {
-        "tag": "dns_proxy",
-        "address": "1.1.1.1",
-        "address_resolver": "dns_direct",
-        "strategy": "ipv4_only",
-        "detour": "proxy"
-      },
-      {
-        "tag": "dns_direct",
-        "address": "1.0.0.1",
-        "strategy": "ipv4_only",
-        "detour": "direct"
-      }
-    ],
-    "rules": [
-      {
-        "domain_keyword": ["telegram"],
-        "server": "dns_proxy"
-      }
-    ],
-    "final": "dns_direct"
-  },
   "inbounds": [
     {
       "type": "tun",
@@ -73,10 +49,6 @@
     "final": "direct",
     "rules": [
       {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
         "ip_is_private": true,
         "outbound": "direct"
       },
@@ -96,7 +68,10 @@
         "ip_cidr": [
           "91.108.0.0/16",
           "149.154.160.0/19",
-          "95.161.64.0/20"
+          "95.161.64.0/20",
+          "2001:67c:4e8::/48",
+          "2001:b28:f23d::/48",
+          "2001:b28:f23f::/48"
         ],
         "outbound": "proxy"
       }
