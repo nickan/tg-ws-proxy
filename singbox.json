@@ -3,38 +3,13 @@
     "level": "info",
     "timestamp": true
   },
-  "dns": {
-    "servers": [
-      {
-        "tag": "dns_proxy",
-        "address": "1.1.1.1",
-        "address_resolver": "dns_direct",
-        "strategy": "ipv4_only",
-        "detour": "proxy"
-      },
-      {
-        "tag": "dns_direct",
-        "address": "1.0.0.1",
-        "strategy": "ipv4_only",
-        "detour": "direct"
-      }
-    ],
-    "rules": [
-      {
-        "domain_keyword": ["telegram"],
-        "server": "dns_proxy"
-      }
-    ],
-    "final": "dns_direct"
-  },
   "inbounds": [
     {
       "type": "tun",
       "tag": "tun-in",
       "interface_name": "tun0",
       "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
+        "172.19.0.1/30"
       ],
       "mtu": 1400,
       "auto_route": true,
@@ -65,69 +40,22 @@
       }
     },
     {
-      "type": "vless",
-      "tag": "netherlands",
-      "server": "64.137.54.68",
-      "server_port": 443,
-      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "unitbook.net",
-        "utls": {
-          "enabled": true,
-          "fingerprint": "qq"
-        },
-        "reality": {
-          "enabled": true,
-          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
-          "short_id": "6ba85179e30d4fc2"
-        }
-      }
-    },
-    {
-      "type": "vless",
-      "tag": "sweden",
-      "server": "194.190.69.69",
-      "server_port": 443,
-      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "jsoncraft.org",
-        "utls": {
-          "enabled": true,
-          "fingerprint": "qq"
-        },
-        "reality": {
-          "enabled": true,
-          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
-          "short_id": "6ba85179e30d4fc2"
-        }
-      }
-    },
-    {
       "type": "direct",
       "tag": "direct"
     }
   ],
   "route": {
     "auto_detect_interface": true,
+    "default_mark": 255,
     "final": "direct",
     "rules": [
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
       {
         "ip_is_private": true,
         "outbound": "direct"
       },
       {
         "ip_cidr": [
-          "217.217.244.111/32",
-          "64.137.54.68/32",
-          "194.190.69.69/32"
+          "217.217.244.111/32"
         ],
         "outbound": "direct"
       },
