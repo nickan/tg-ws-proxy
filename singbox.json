@@ -23,10 +23,6 @@
       {
         "domain_keyword": ["telegram"],
         "server": "dns_proxy"
-      },
-      {
-        "rule_set": ["custom-domains"],
-        "server": "dns_proxy"
       }
     ],
     "final": "dns_direct"
@@ -68,48 +64,6 @@
       }
     },
     {
-      "type": "vless",
-      "tag": "netherlands",
-      "server": "64.137.54.68",
-      "server_port": 443,
-      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "unitbook.net",
-        "utls": {
-          "enabled": true,
-          "fingerprint": "qq"
-        },
-        "reality": {
-          "enabled": true,
-          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
-          "short_id": "6ba85179e30d4fc2"
-        }
-      }
-    },
-    {
-      "type": "vless",
-      "tag": "sweden",
-      "server": "194.190.69.69",
-      "server_port": 443,
-      "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "jsoncraft.org",
-        "utls": {
-          "enabled": true,
-          "fingerprint": "qq"
-        },
-        "reality": {
-          "enabled": true,
-          "public_key": "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc",
-          "short_id": "6ba85179e30d4fc2"
-        }
-      }
-    },
-    {
       "type": "direct",
       "tag": "direct"
     }
@@ -117,14 +71,6 @@
   "route": {
     "auto_detect_interface": true,
     "final": "direct",
-    "rule_set": [
-      {
-        "tag": "custom-domains",
-        "type": "local",
-        "format": "source",
-        "path": "/etc/singbox_domains.json"
-      }
-    ],
     "rules": [
       {
         "protocol": "dns",
@@ -136,9 +82,7 @@
       },
       {
         "ip_cidr": [
-          "217.217.244.111/32",
-          "64.137.54.68/32",
-          "194.190.69.69/32"
+          "217.217.244.111/32"
         ],
         "outbound": "direct"
       },
@@ -152,16 +96,7 @@
         "ip_cidr": [
           "91.108.0.0/16",
           "149.154.160.0/19",
-          "95.161.64.0/20",
-          "2001:67c:4e8::/48",
-          "2001:b28:f23d::/48",
-          "2001:b28:f23f::/48"
-        ],
-        "outbound": "proxy"
-      },
-      {
-        "rule_set": [
-          "custom-domains"
+          "95.161.64.0/20"
         ],
         "outbound": "proxy"
       }
