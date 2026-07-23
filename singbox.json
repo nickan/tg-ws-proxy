@@ -47,19 +47,8 @@
   ],
   "outbounds": [
     {
-      "type": "urltest",
-      "tag": "proxy",
-      "outbounds": [
-        "latvia",
-        "netherlands",
-        "sweden"
-      ],
-      "url": "https://cp.cloudflare.com/generate_204",
-      "interval": "5m"
-    },
-    {
       "type": "vless",
-      "tag": "latvia",
+      "tag": "proxy",
       "server": "217.217.244.111",
       "server_port": 443,
       "uuid": "dff48506-028c-48dc-88a1-dc1d3657648c",
