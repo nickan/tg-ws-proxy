@@ -72,14 +72,11 @@ EOF
     exec >> "${LOG_FILE}" 2>&1
     echo "=== sing-box startup: $(date) ==="
 
-    # 1. Wait for network to stabilize
-    echo "[*] Waiting ${BOOT_DELAY}s for network to stabilize..."
-    sleep "${BOOT_DELAY}"
-
+    # 1. Check network connectivity (only sleep if network is not ready yet)
     PING_TARGET="1.1.1.1"
-    if ! ping -c 2 -W 3 "${PING_TARGET}" > /dev/null 2>&1; then
-        echo "[!] Internet unreachable — waiting 20s more..."
-        sleep 20
+    if ! ping -c 1 -W 2 "${PING_TARGET}" > /dev/null 2>&1; then
+        echo "[*] Waiting ${BOOT_DELAY}s for network to stabilize..."
+        sleep "${BOOT_DELAY}"
         if ! ping -c 2 -W 3 "${PING_TARGET}" > /dev/null 2>&1; then
             echo "[!] Internet still unreachable — aborting start."
             exit 1
