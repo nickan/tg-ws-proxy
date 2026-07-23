@@ -21,6 +21,10 @@
     ],
     "rules": [
       {
+        "domain_keyword": ["telegram"],
+        "server": "dns_proxy"
+      },
+      {
         "rule_set": ["custom-domains", "russia-blocked", "russia-youtube"],
         "server": "dns_proxy"
       }
@@ -164,14 +168,19 @@
         "outbound": "direct"
       },
       {
+        "domain_keyword": [
+          "telegram"
+        ],
+        "outbound": "proxy"
+      },
+      {
         "ip_cidr": [
-          "91.108.4.0/22",
-          "91.108.8.0/22",
-          "91.108.12.0/22",
-          "91.108.16.0/22",
-          "91.108.56.0/22",
-          "149.154.160.0/20",
-          "149.154.164.0/22"
+          "91.108.0.0/16",
+          "149.154.160.0/19",
+          "95.161.64.0/20",
+          "2001:67c:4e8::/48",
+          "2001:b28:f23d::/48",
+          "2001:b28:f23f::/48"
         ],
         "outbound": "proxy"
       },
