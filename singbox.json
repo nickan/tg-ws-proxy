@@ -25,7 +25,7 @@
         "server": "dns_proxy"
       },
       {
-        "rule_set": ["custom-domains", "russia-blocked", "russia-youtube"],
+        "rule_set": ["custom-domains"],
         "server": "dns_proxy"
       }
     ],
@@ -134,20 +134,6 @@
         "type": "local",
         "format": "source",
         "path": "/etc/singbox_domains.json"
-      },
-      {
-        "tag": "russia-blocked",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/nickan/tg-ws-proxy/master/rules/russia-blocked.srs",
-        "download_detour": "direct"
-      },
-      {
-        "tag": "russia-youtube",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/nickan/tg-ws-proxy/master/rules/russia-youtube.srs",
-        "download_detour": "direct"
       }
     ],
     "rules": [
@@ -186,9 +172,7 @@
       },
       {
         "rule_set": [
-          "custom-domains",
-          "russia-blocked",
-          "russia-youtube"
+          "custom-domains"
         ],
         "outbound": "proxy"
       }
