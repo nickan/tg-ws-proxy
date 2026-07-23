@@ -39,9 +39,10 @@
       "address": [
         "172.19.0.1/30"
       ],
+      "mtu": 1400,
       "auto_route": true,
       "strict_route": true,
-      "stack": "system"
+      "stack": "mixed"
     }
   ],
   "outbounds": [
@@ -54,7 +55,7 @@
         "sweden"
       ],
       "url": "https://www.gstatic.com/generate_204",
-      "interval": "3m",
+      "interval": "2m",
       "tolerance": 50
     },
     {
@@ -90,7 +91,7 @@
         "server_name": "unitbook.net",
         "utls": {
           "enabled": true,
-          "fingerprint": "chrome"
+          "fingerprint": "qq"
         },
         "reality": {
           "enabled": true,
@@ -111,7 +112,7 @@
         "server_name": "jsoncraft.org",
         "utls": {
           "enabled": true,
-          "fingerprint": "chrome"
+          "fingerprint": "qq"
         },
         "reality": {
           "enabled": true,
