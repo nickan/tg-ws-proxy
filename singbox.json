@@ -3,6 +3,30 @@
     "level": "info",
     "timestamp": true
   },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns_proxy",
+        "type": "tls",
+        "server": "1.1.1.1",
+        "detour": "proxy"
+      },
+      {
+        "tag": "dns_direct",
+        "type": "udp",
+        "server": "1.1.1.1",
+        "detour": "direct"
+      }
+    ],
+    "rules": [
+      {
+        "outbound": "any",
+        "server": "dns_proxy"
+      }
+    ],
+    "final": "dns_proxy",
+    "strategy": "ipv4_only"
+  },
   "inbounds": [
     {
       "type": "tun",
@@ -13,7 +37,7 @@
       ],
       "mtu": 1400,
       "auto_route": true,
-      "strict_route": false,
+      "strict_route": true,
       "stack": "mixed"
     }
   ],
@@ -46,9 +70,19 @@
   ],
   "route": {
     "auto_detect_interface": true,
-    "default_mark": 255,
     "final": "direct",
     "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "port": 53,
+        "action": "hijack-dns"
+      },
       {
         "ip_is_private": true,
         "outbound": "direct"
@@ -58,6 +92,10 @@
           "217.217.244.111/32"
         ],
         "outbound": "direct"
+      },
+      {
+        "rule_set": "custom-domains",
+        "outbound": "proxy"
       },
       {
         "domain_keyword": [
@@ -75,6 +113,14 @@
           "2001:b28:f23f::/48"
         ],
         "outbound": "proxy"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "custom-domains",
+        "type": "local",
+        "format": "source",
+        "path": "/etc/singbox_domains.json"
       }
     ]
   }
