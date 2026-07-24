@@ -27,7 +27,6 @@ gemini.google.com
 generativelanguage.googleapis.com
 perplexity.ai
 midjourney.com
-deepseek.com
 copilot.microsoft.com
 t.me
 telegram.org
@@ -215,7 +214,7 @@ EOF
         uci set firewall.@zone[-1].name='singbox'
         uci set firewall.@zone[-1].input='ACCEPT'
         uci set firewall.@zone[-1].output='ACCEPT'
-        uci set firewall.@zone[-1].forward='REJECT'
+        uci set firewall.@zone[-1].forward='ACCEPT'
         uci set firewall.@zone[-1].masq='1'
         uci set firewall.@zone[-1].mtu_fix='1'
         uci add_list firewall.@zone[-1].device='tun0'
