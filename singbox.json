@@ -18,11 +18,17 @@
     ],
     "rules": [
       {
-        "outbound": "any",
+        "rule_set": "custom-domains",
+        "server": "dns_proxy"
+      },
+      {
+        "domain_keyword": [
+          "telegram"
+        ],
         "server": "dns_proxy"
       }
     ],
-    "final": "dns_proxy",
+    "final": "dns_direct",
     "strategy": "ipv4_only"
   },
   "inbounds": [
@@ -35,7 +41,7 @@
       ],
       "mtu": 1400,
       "auto_route": true,
-      "strict_route": true,
+      "strict_route": false,
       "stack": "mixed"
     }
   ],
@@ -68,6 +74,7 @@
   ],
   "route": {
     "auto_detect_interface": true,
+    "default_mark": 255,
     "final": "direct",
     "rules": [
       {
