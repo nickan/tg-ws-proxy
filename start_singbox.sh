@@ -168,57 +168,46 @@ EOF
     fi
 
     if [ "${DOWNLOAD_NEEDED}" -eq 1 ]; then
-        echo "[*] Downloading sing-box v${VERSION} (${SINGBOX_ARCH}) from GitHub..."
+        echo "[*] Cleaning up /tmp before download..."
+        rm -rf /tmp/sing-box* /tmp/*.tar.gz 2>/dev/null || true
+
+        echo "[*] Downloading and streaming extraction of sing-box v${VERSION} (${SINGBOX_ARCH})..."
         DOWNLOAD_OK=0
         
         if command -v curl > /dev/null 2>&1; then
-            curl -L --insecure --silent --show-error --connect-timeout 20 --max-time 120 \
-                -o /tmp/sing-box.tar.gz "${DOWNLOAD_URL}" && DOWNLOAD_OK=1
+            curl -L --insecure --silent --show-error --connect-timeout 20 --max-time 180 \
+                "${DOWNLOAD_URL}" | tar -zxf - -C /tmp 2>/dev/null && DOWNLOAD_OK=1
         fi
         
         if [ "${DOWNLOAD_OK}" -eq 0 ] && command -v wget > /dev/null 2>&1; then
-            wget --no-check-certificate --quiet --timeout=20 \
-                -O /tmp/sing-box.tar.gz "${DOWNLOAD_URL}" && DOWNLOAD_OK=1
+            wget --no-check-certificate --quiet --timeout=30 \
+                -O - "${DOWNLOAD_URL}" | tar -zxf - -C /tmp 2>/dev/null && DOWNLOAD_OK=1
         fi
         
         if [ "${DOWNLOAD_OK}" -eq 0 ]; then
-            echo "[!] Download failed. Aborting."
+            echo "[!] Stream download failed. Aborting."
             exit 1
         fi
 
-        ACTUAL_SIZE=$(wc -c < /tmp/sing-box.tar.gz 2>/dev/null || echo 0)
-        echo "[*] Downloaded archive size: ${ACTUAL_SIZE} bytes"
-        
-        if [ "${ACTUAL_SIZE}" -lt 100000 ]; then
-            echo "[!] Archive is too small. Corrupted download?"
-            rm -f /tmp/sing-box.tar.gz
-            exit 1
-        fi
-
-        echo "[*] Extracting sing-box binary..."
-        tar -zxf /tmp/sing-box.tar.gz -C /tmp
-        
-        EXTRACTED_DIR="/tmp/sing-box-${VERSION}-linux-${SINGBOX_ARCH}"
-        if [ -f "${EXTRACTED_DIR}/sing-box" ]; then
+        EXTRACTED_DIR=$(find /tmp -maxdepth 1 -name "sing-box-${VERSION}-linux-${SINGBOX_ARCH}" -type d 2>/dev/null | head -n 1)
+        if [ -n "${EXTRACTED_DIR}" ] && [ -f "${EXTRACTED_DIR}/sing-box" ]; then
             mv "${EXTRACTED_DIR}/sing-box" "${BINARY_PATH}"
             chmod +x "${BINARY_PATH}"
             echo "[+] Extracted and moved binary to ${BINARY_PATH}"
         else
-            FOUND_BIN=$(find /tmp/sing-box-* -name sing-box -type f 2>/dev/null | head -n 1)
+            FOUND_BIN=$(find /tmp -name sing-box -type f 2>/dev/null | head -n 1)
             if [ -n "${FOUND_BIN}" ]; then
                 mv "${FOUND_BIN}" "${BINARY_PATH}"
                 chmod +x "${BINARY_PATH}"
                 echo "[+] Found binary at ${FOUND_BIN} and moved to ${BINARY_PATH}"
             else
                 echo "[!] Failed to find sing-box in extracted files."
-                rm -rf /tmp/sing-box.tar.gz /tmp/sing-box-* 2>/dev/null
+                rm -rf /tmp/sing-box* 2>/dev/null
                 exit 1
             fi
         fi
         
-        rm -f /tmp/sing-box.tar.gz
-        rm -rf /tmp/sing-box-${VERSION}-linux-${SINGBOX_ARCH} 2>/dev/null || true
-        rm -rf /tmp/sing-box-* 2>/dev/null || true
+        rm -rf /tmp/sing-box-${VERSION}-linux-${SINGBOX_ARCH} /tmp/sing-box-* 2>/dev/null || true
     fi
 
     # 8. Configure firewall for tun0
