@@ -120,7 +120,7 @@
       {
         "tag": "custom-domains",
         "type": "local",
-        "format": "json",
+        "format": "source",
         "path": "/etc/singbox_domains.json"
       }
     ]
