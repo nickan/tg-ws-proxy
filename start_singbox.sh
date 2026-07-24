@@ -103,8 +103,13 @@ EOF
     fi
 
     if [ -s /tmp/singbox.json.new ]; then
-        mv /tmp/singbox.json.new /etc/singbox.json
-        echo "[+] Updated /etc/singbox.json from GitHub"
+        if "${BINARY_PATH}" check -c /tmp/singbox.json.new >/dev/null 2>&1 || [ ! -f "${CONFIG_FILE}" ]; then
+            mv /tmp/singbox.json.new /etc/singbox.json
+            echo "[+] Updated /etc/singbox.json from GitHub"
+        else
+            echo "[!] Downloaded /tmp/singbox.json.new failed validation (CDN cache?). Keeping existing ${CONFIG_FILE}."
+            rm -f /tmp/singbox.json.new
+        fi
     else
         rm -f /tmp/singbox.json.new 2>/dev/null
     fi
