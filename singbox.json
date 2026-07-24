@@ -29,7 +29,9 @@
       }
     ],
     "final": "dns_direct",
-    "strategy": "ipv4_only"
+    "strategy": "ipv4_only",
+    "independent_cache": true,
+    "reverse_mapping": true
   },
   "inbounds": [
     {
@@ -81,18 +83,17 @@
         "action": "sniff"
       },
       {
-        "ip_cidr": [
-          "217.217.244.111/32",
-          "217.217.244.85/32"
-        ],
-        "outbound": "direct"
-      },
-      {
         "protocol": "dns",
         "action": "hijack-dns"
       },
       {
         "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "ip_cidr": [
+          "217.217.244.111/32"
+        ],
         "outbound": "direct"
       },
       {
@@ -108,7 +109,15 @@
       {
         "ip_cidr": [
           "91.108.0.0/16",
-          "149.154.160.0/19",
+          "149.154.160.0/16",
+          "91.108.4.0/22",
+          "91.108.8.0/22",
+          "91.108.12.0/22",
+          "91.108.16.0/22",
+          "91.108.56.0/22",
+          "149.154.164.0/22",
+          "149.154.168.0/22",
+          "149.154.172.0/22",
           "95.161.64.0/20",
           "2001:67c:4e8::/48",
           "2001:b28:f23d::/48",
@@ -121,7 +130,7 @@
       {
         "tag": "custom-domains",
         "type": "local",
-        "format": "json",
+        "format": "source",
         "path": "/etc/singbox_domains.json"
       }
     ]
