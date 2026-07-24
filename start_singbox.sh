@@ -207,7 +207,7 @@ EOF
             fi
         fi
         
-        rm -rf /tmp/sing-box-${VERSION}-linux-${SINGBOX_ARCH} /tmp/sing-box-* 2>/dev/null || true
+        rm -rf /tmp/sing-box-1* /tmp/sing-box-v* 2>/dev/null || true
     fi
 
     # 8. Configure firewall for tun0
