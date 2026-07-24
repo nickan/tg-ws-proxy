@@ -169,7 +169,7 @@ EOF
 
     if [ "${DOWNLOAD_NEEDED}" -eq 1 ]; then
         echo "[*] Cleaning up /tmp before download..."
-        rm -rf /tmp/sing-box* /tmp/*.tar.gz 2>/dev/null || true
+        rm -rf /tmp/sing-box-1* /tmp/sing-box-v* /tmp/*.tar.gz 2>/dev/null || true
 
         echo "[*] Downloading and streaming extraction of sing-box v${VERSION} (${SINGBOX_ARCH})..."
         DOWNLOAD_OK=0
