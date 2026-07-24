@@ -7,14 +7,12 @@
     "servers": [
       {
         "tag": "dns_proxy",
-        "type": "tls",
-        "server": "1.1.1.1",
+        "address": "tls://1.1.1.1",
         "detour": "proxy"
       },
       {
         "tag": "dns_direct",
-        "type": "udp",
-        "server": "1.1.1.1",
+        "address": "1.1.1.1",
         "detour": "direct"
       }
     ],

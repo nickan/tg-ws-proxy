@@ -2,7 +2,7 @@
 # start_singbox.sh - OpenWrt script to download sing-box to /tmp and run VPN.
 # Automatically updates config and domain list from GitHub on launch.
 
-VERSION="1.11.4"
+VERSION="1.13.14"
 CONFIG_FILE="/etc/singbox.json"
 BINARY_PATH="/tmp/sing-box"
 LOG_FILE="/tmp/sing-box.log"
@@ -157,11 +157,12 @@ EOF
     # 7. Download and extract sing-box binary if not already present/valid
     DOWNLOAD_NEEDED=1
     if [ -f "${BINARY_PATH}" ]; then
-        if "${BINARY_PATH}" version >/dev/null 2>&1; then
-            echo "[+] Working sing-box binary already exists in /tmp"
+        CURRENT_VER=$("${BINARY_PATH}" version 2>/dev/null | grep "sing-box version" | awk '{print $3}')
+        if [ "${CURRENT_VER}" = "${VERSION}" ]; then
+            echo "[+] Working sing-box binary v${VERSION} already exists in /tmp"
             DOWNLOAD_NEEDED=0
         else
-            echo "[!] Existing binary in /tmp is invalid. Deleting..."
+            echo "[!] Existing binary version (${CURRENT_VER}) does not match target ${VERSION}. Updating..."
             rm -f "${BINARY_PATH}"
         fi
     fi
