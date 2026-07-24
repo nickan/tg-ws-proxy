@@ -85,10 +85,6 @@
         "action": "hijack-dns"
       },
       {
-        "port": 53,
-        "action": "hijack-dns"
-      },
-      {
         "ip_is_private": true,
         "outbound": "direct"
       },
@@ -124,7 +120,7 @@
       {
         "tag": "custom-domains",
         "type": "local",
-        "format": "source",
+        "format": "json",
         "path": "/etc/singbox_domains.json"
       }
     ]
